@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="assets/branding/obsidian-brand-sheet.png" alt="OBSIDIAN brand sheet" width="100%">
+  <img src="assets/branding/obsidian-readme-banner.png" alt="OBSIDIAN — x86-64 PE packer for anti-detection research" width="100%">
 </p>
 
-# OBSIDIAN
-
-**Open-source x86-64 PE packer for anti-detection research.**
+<p align="center">
+  <strong>Open-source x86-64 PE packer for anti-detection research.</strong>
+</p>
 
 OBSIDIAN is intended to transform Windows executables, minimize repeatable static signatures, and measure how packing and mutation affect antivirus detection. It is an offensive-security research project: the objective is not disguised as compression, optimization, or intellectual-property protection.
 
@@ -90,9 +90,23 @@ It is not authorization to deploy packed payloads against systems, users, or org
 - [ ] Detection benchmarking and result history
 - [ ] Stable command-line interface
 
-## Branding
+## Visual identity
 
-The brand sheet above is the visual reference for OBSIDIAN. The emblem, wordmark, typography direction, proportions, and black, graphite, mineral-gray, and electric-violet palette should remain consistent across future assets.
+OBSIDIAN uses a restrained visual system built around black mineral surfaces, cold metal, sharp fractures, and a single controlled violet energy accent. It should feel low-level, hostile, and precise without falling into generic hacker or gaming aesthetics.
+
+| Role | Color | Hex |
+| --- | --- | --- |
+| Obsidian | Near black | `#050607` |
+| Graphite | Structural gray | `#17191D` |
+| Mineral | Cold silver | `#C4C9D0` |
+| Fracture | Electric violet | `#7C2CFF` |
+
+The violet accent should remain rare. It identifies the fracture and active states; it is not a background color. Typography should be wide, uppercase, geometric, and highly legible. Effects stay controlled: no Matrix code, hooded figures, skulls, circuit-board wallpaper, excessive neon, or fake terminal decoration.
+
+Brand assets:
+
+- [`obsidian-readme-banner.png`](assets/branding/obsidian-readme-banner.png) — primary repository header;
+- [`obsidian-emblem.png`](assets/branding/obsidian-emblem.png) — transparent standalone emblem.
 
 ## License
 
