@@ -17,7 +17,7 @@ obsidian input.exe
 Behind that command, OBSIDIAN is expected to inspect the input PE, build a packed executable, validate the result, run controlled analysis, mutate the packing configuration, and retain comparable measurements across builds.
 
 > [!IMPORTANT]
-> **Current status: pre-implementation.** The repository contains a buildable CLI scaffold, not a working packer. Everything under **Target state** describes the intended finished project, not features that already exist. Capabilities will only be marked as implemented after they have been built and tested.
+> **Current status: pre-implementation.** The repository contains a minimal buildable executable scaffold, not a working packer. Everything under **Target state** describes the intended finished project, not features that already exist. Capabilities will only be marked as implemented after they have been built and tested.
 
 ## Why this exists
 
