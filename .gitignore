@@ -1,0 +1,30 @@
+# Build output
+/build/
+*.o
+*.obj
+*.d
+*.a
+*.lib
+*.dll
+*.exe
+*.pdb
+*.ilk
+
+# Generated tooling files
+compile_commands.json
+
+# Editors and IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local configuration and logs
+.env
+.env.*
+*.log
+
+# Operating systems
+.DS_Store
+Thumbs.db
+Desktop.ini

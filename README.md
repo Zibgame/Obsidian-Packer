@@ -17,7 +17,7 @@ obsidian input.exe
 Behind that command, OBSIDIAN is expected to inspect the input PE, build a packed executable, validate the result, run controlled analysis, mutate the packing configuration, and retain comparable measurements across builds.
 
 > [!IMPORTANT]
-> **Current status: pre-implementation.** This repository does not yet contain a working packer. Everything under **Target state** describes the intended finished project, not features that already exist. Capabilities will only be marked as implemented after they have been built and tested.
+> **Current status: pre-implementation.** The repository contains a buildable CLI scaffold, not a working packer. Everything under **Target state** describes the intended finished project, not features that already exist. Capabilities will only be marked as implemented after they have been built and tested.
 
 ## Why this exists
 
@@ -59,6 +59,27 @@ inspect -> pack -> validate -> execute -> analyze -> mutate -> compare
 - **42 constraints:** the current subject, authorized functions, Norm, and Norminette requirements will be applied once they are present in the repository
 
 The implementation should remain small enough to audit. A working vertical slice takes priority over a large collection of empty abstractions.
+
+## Build
+
+Requirements:
+
+- a C++17 compiler;
+- GNU Make.
+
+Build with all detected logical processors:
+
+```console
+make parallel
+```
+
+GNU Make's native parallel syntax is also supported:
+
+```console
+make -j
+```
+
+The executable is written to `build/bin/obsidian` on Unix-like systems and `build/bin/obsidian.exe` on Windows. Use `make clean` to remove every generated build artifact.
 
 ## Research scope
 
