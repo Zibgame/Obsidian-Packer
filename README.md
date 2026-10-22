@@ -1,0 +1,99 @@
+<p align="center">
+  <img src="assets/branding/obsidian-brand-sheet.png" alt="OBSIDIAN brand sheet" width="100%">
+</p>
+
+# OBSIDIAN
+
+**Open-source x86-64 PE packer for anti-detection research.**
+
+OBSIDIAN is intended to transform Windows executables, minimize repeatable static signatures, and measure how packing and mutation affect antivirus detection. It is an offensive-security research project: the objective is not disguised as compression, optimization, or intellectual-property protection.
+
+The long-term interface is deliberately simple:
+
+```console
+obsidian input.exe
+```
+
+Behind that command, OBSIDIAN is expected to inspect the input PE, build a packed executable, validate the result, run controlled analysis, mutate the packing configuration, and retain comparable measurements across builds.
+
+> [!IMPORTANT]
+> **Current status: pre-implementation.** This repository does not yet contain a working packer. Everything under **Target state** describes the intended finished project, not features that already exist. Capabilities will only be marked as implemented after they have been built and tested.
+
+## Why this exists
+
+Common public packers are easy to fingerprint. Their section layouts, metadata, stubs, and other structural artifacts can become signatures of their own. Packing a clean executable with a well-known tool can therefore increase its detection rate instead of reducing it.
+
+OBSIDIAN explores the opposite direction: a packer designed around measurable variation rather than a single recognizable output format. The project studies which PE transformations survive execution, which artifacts remain stable enough to identify, and how different builds change static and heuristic detection.
+
+This is anti-detection research. No euphemism is needed. It is also not a promise of “FUD,” universal bypass, or permanent invisibility. Detection is an adversarial and constantly changing measurement, not a feature that can be guaranteed.
+
+## Target state
+
+The finished tool is intended to provide:
+
+- strict parsing and validation of Windows PE32+ x86-64 executables;
+- packing of executable content into a compressed and/or encoded representation;
+- a runtime restoration stub capable of reconstructing a valid execution state;
+- controlled handling of entry points, sections, imports, relocations, memory permissions, and integrity metadata;
+- reproducible builds for debugging and randomized builds for mutation experiments;
+- configurable transformations that reduce stable packer-specific signatures;
+- automated structural comparison between the original and packed binaries;
+- execution checks in an isolated test environment;
+- batch generation of packing variants;
+- machine-readable reports for size, entropy, hashes, PE structure, configuration, and detection results;
+- comparison of multiple builds to identify transformations that materially affect detection.
+
+The intended workflow is iterative:
+
+```text
+inspect -> pack -> validate -> execute -> analyze -> mutate -> compare
+```
+
+## Technical direction
+
+- **Platform:** Windows
+- **Format:** PE32+ / x86-64
+- **Primary language:** C
+- **Low-level code:** x86-64 assembly only where justified
+- **Build discipline:** `-Wall -Wextra -Werror`, explicit ownership, strict error handling
+- **42 constraints:** the current subject, authorized functions, Norm, and Norminette requirements will be applied once they are present in the repository
+
+The implementation should remain small enough to audit. A working vertical slice takes priority over a large collection of empty abstractions.
+
+## Research scope
+
+OBSIDIAN is built for controlled offensive-security research, packer analysis, reverse engineering, defensive testing, and authorized laboratory evaluation. It may be used to study how security products react to binary transformations and where static or heuristic detections originate.
+
+It is not authorization to deploy packed payloads against systems, users, or organizations without explicit permission. Users are responsible for complying with applicable law, institutional rules, software licenses, and the scope of every assessment.
+
+## Project principles
+
+- Be explicit about offensive capability and intended use.
+- Never claim a bypass that has not been reproduced.
+- Never present planned functionality as implemented.
+- Keep transformations observable, testable, and reversible during development.
+- Record the exact configuration behind every measurement.
+- Treat antivirus results as time-bound data, not permanent truth.
+- Prefer documented PE behavior over fragile tricks unless the experiment specifically targets edge cases.
+
+## Roadmap
+
+- [ ] PE32+ parser and validator
+- [ ] Minimal pack-and-restore proof of concept
+- [ ] Runtime stub and entry-point transfer
+- [ ] Import and relocation strategy
+- [ ] Integrity and failure handling
+- [ ] Deterministic test fixtures
+- [ ] Mutation engine
+- [ ] Structural and entropy analysis
+- [ ] Isolated execution harness
+- [ ] Detection benchmarking and result history
+- [ ] Stable command-line interface
+
+## Branding
+
+The brand sheet above is the visual reference for OBSIDIAN. The emblem, wordmark, typography direction, proportions, and black, graphite, mineral-gray, and electric-violet palette should remain consistent across future assets.
+
+## License
+
+No license has been selected yet. Until a license file is added, the repository should not be treated as granting permission to copy, modify, or redistribute the code.
