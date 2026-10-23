@@ -9,7 +9,7 @@ LDLIBS ?=
 SRC_DIR := src
 STUB_DIR := $(SRC_DIR)/stub
 OBJ_DIR := build/obj
-BIN_DIR := build/bin
+BIN_DIR := .
 SOURCES := $(wildcard $(SRC_DIR)/*.cpp)
 STUB_SOURCES := $(wildcard $(STUB_DIR)/*.cpp)
 OBJECTS := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SOURCES))
@@ -33,12 +33,18 @@ endef
 define remove-dir
 	@rm -rf "$1"
 endef
+define remove-file
+	@rm -f "$1"
+endef
 else
 define make-dir
 	@if not exist "$(subst /,\,$1)" mkdir "$(subst /,\,$1)"
 endef
 define remove-dir
 	@if exist "$(subst /,\,$1)" rmdir /S /Q "$(subst /,\,$1)"
+endef
+define remove-file
+	@if exist "$(subst /,\,$1)" del /Q "$(subst /,\,$1)"
 endef
 endif
 
@@ -57,11 +63,9 @@ parallel:
 	+$(MAKE) --jobs=$(JOBS) all
 
 $(TARGET): $(OBJECTS)
-	$(call make-dir,$(@D))
 	$(CXX) $(LDFLAGS) $(OBJECTS) $(LDLIBS) -o $@
 
 $(STUB_TARGET): $(STUB_OBJECTS)
-	$(call make-dir,$(@D))
 	$(CXX) $(LDFLAGS) $(STUB_OBJECTS) $(LDLIBS) -o $@
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
@@ -74,6 +78,8 @@ $(OBJ_DIR)/stub/%.o: $(STUB_DIR)/%.cpp
 
 clean:
 	$(call remove-dir,build)
+	$(call remove-file,$(TARGET))
+	$(call remove-file,$(STUB_TARGET))
 
 re: clean
 	+$(MAKE) --jobs=$(JOBS) all
