@@ -81,6 +81,14 @@ make -j
 
 For the current test phase, the build writes the main `obsidian` executable and the separate `obsidian-stub` runtime executable directly to the repository root. Windows builds use the `.exe` extension. Use `make clean` to remove every generated build artifact.
 
+The current packer scaffold accepts one runtime stub path:
+
+```console
+obsidian.exe obsidian-stub.exe
+```
+
+The path is currently checked for readability only. PE parsing and packing are not implemented yet.
+
 ## Research scope
 
 OBSIDIAN is built for controlled offensive-security research, packer analysis, reverse engineering, defensive testing, and authorized laboratory evaluation. It may be used to study how security products react to binary transformations and where static or heuristic detections originate.
