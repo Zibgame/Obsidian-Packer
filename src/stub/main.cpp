@@ -20,14 +20,22 @@ int	main(void)
 	DWORD		path_length;
 	DWORD		written;
 	HANDLE		output;
+	HANDLE		self_file;
 
 	output = GetStdHandle(STD_OUTPUT_HANDLE);
 	if (output == INVALID_HANDLE_VALUE)
 		return (1);
 	if (!WriteFile(output, message, sizeof(message) - 1, &written, NULL))
 		return (1);
+
 	path_length = GetModuleFileNameA(NULL, self_path, MAX_PATH);
 	if (path_length == 0 || path_length == MAX_PATH)
+		return (1);
+
+	self_file = CreateFileA(self_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (self_file == INVALID_HANDLE_VALUE)
+		return (1);
+	if (!CloseHandle(self_file))
 		return (1);
 	return (0);
 }
