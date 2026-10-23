@@ -10,11 +10,13 @@ SRC_DIR := src
 STUB_DIR := $(SRC_DIR)/stub
 OBJ_DIR := build/obj
 BIN_DIR := .
-SOURCES := $(wildcard $(SRC_DIR)/*.cpp) $(wildcard $(SRC_DIR)/file/*.cpp)
+MAIN_SOURCES := $(wildcard $(SRC_DIR)/*.cpp)
 STUB_SOURCES := $(wildcard $(STUB_DIR)/*.cpp)
-OBJECTS := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SOURCES))
+COMMON_SOURCES := $(wildcard $(SRC_DIR)/file/*.cpp) $(wildcard $(SRC_DIR)/compression/*.cpp)
+MAIN_OBJECTS := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(MAIN_SOURCES))
 STUB_OBJECTS := $(patsubst $(STUB_DIR)/%.cpp,$(OBJ_DIR)/stub/%.o,$(STUB_SOURCES))
-DEPENDENCIES := $(OBJECTS:.o=.d) $(STUB_OBJECTS:.o=.d)
+COMMON_OBJECTS := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(COMMON_SOURCES))
+DEPENDENCIES := $(MAIN_OBJECTS:.o=.d) $(STUB_OBJECTS:.o=.d) $(COMMON_OBJECTS:.o=.d)
 
 ifeq ($(OS),Windows_NT)
 TARGET := $(BIN_DIR)/$(NAME).exe
@@ -29,6 +31,8 @@ PACKED_TARGET := output
 EXTRACTED_TARGET := extracted.bin
 JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
 endif
+
+LDLIBS += -lcabinet
 
 ifneq ($(findstring sh,$(notdir $(SHELL))),)
 define make-dir
@@ -66,11 +70,11 @@ all: $(TARGET) $(STUB_TARGET)
 parallel:
 	+$(MAKE) --jobs=$(JOBS) all
 
-$(TARGET): $(OBJECTS)
-	$(CXX) $(LDFLAGS) $(OBJECTS) $(LDLIBS) -o $@
+$(TARGET): $(MAIN_OBJECTS) $(COMMON_OBJECTS)
+	$(CXX) $(LDFLAGS) $(MAIN_OBJECTS) $(COMMON_OBJECTS) $(LDLIBS) -o $@
 
-$(STUB_TARGET): $(STUB_OBJECTS)
-	$(CXX) $(LDFLAGS) $(STUB_OBJECTS) $(LDLIBS) -o $@
+$(STUB_TARGET): $(STUB_OBJECTS) $(COMMON_OBJECTS)
+	$(CXX) $(LDFLAGS) $(STUB_OBJECTS) $(COMMON_OBJECTS) $(LDLIBS) -o $@
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(call make-dir,$(@D))

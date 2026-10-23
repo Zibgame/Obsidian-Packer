@@ -17,7 +17,7 @@ obsidian input.exe
 Behind that command, OBSIDIAN is expected to inspect the input PE, build a packed executable, validate the result, run controlled analysis, mutate the packing configuration, and retain comparable measurements across builds.
 
 > [!IMPORTANT]
-> **Current status: pre-implementation.** The repository contains a minimal buildable executable scaffold, not a working packer. Everything under **Target state** describes the intended finished project, not features that already exist. Capabilities will only be marked as implemented after they have been built and tested.
+> **Current status: functional data-packing prototype.** OBSIDIAN can compress a benign payload into a copy of its runtime stub and restore the exact original bytes to `extracted.bin`. It does not execute the payload or modify PE structures yet. Everything under **Target state** remains the intended finished project unless explicitly marked as complete.
 
 ## Why this exists
 
@@ -53,7 +53,7 @@ inspect -> pack -> validate -> execute -> analyze -> mutate -> compare
 
 - **Platform:** Windows
 - **Format:** PE32+ / x86-64
-- **Primary language:** C
+- **Primary language:** C++17
 - **Low-level code:** x86-64 assembly only where justified
 - **Build discipline:** `-Wall -Wextra -Werror`, explicit ownership, strict error handling
 - **42 constraints:** the current subject, authorized functions, Norm, and Norminette requirements will be applied once they are present in the repository
@@ -65,7 +65,8 @@ The implementation should remain small enough to audit. A working vertical slice
 Requirements:
 
 - a C++17 compiler;
-- GNU Make.
+- GNU Make;
+- the Windows Compression API and Cabinet import library.
 
 Build with all detected logical processors:
 
@@ -87,13 +88,19 @@ The current packer scaffold accepts a runtime stub and a payload path:
 obsidian.exe obsidian-stub.exe message.txt
 ```
 
-The current test copies the supplied stub to `output.exe` in the repository root, then appends the payload bytes, the `OBSD` marker, and the payload length as an 8-byte little-endian `uint64_t`. It does not yet parse or modify PE structures.
+The current test compresses the payload with Windows XPRESS_HUFF, copies the supplied stub to `output.exe`, and appends the compressed bytes followed by this footer:
 
-The runtime stub reads the final 12 bytes of its own executable, rejects the file when the `OBSD` marker is absent, calculates the payload offset, and writes the recovered data to `extracted.bin` without executing it.
+```text
+[OBSD][compressed size: uint64 LE][original size: uint64 LE]
+```
+
+It does not yet modify PE structures.
+
+The runtime stub reads the final 20 bytes of its own executable, rejects the file when the `OBSD` marker is absent, locates the compressed payload, decompresses it, and writes the recovered data to `extracted.bin` without executing it.
 
 ## File helpers
 
-The C++ `file` module is used for binary file operations. It currently provides `copy`, `clear`, `append`, `append_file`, `write_at`, and `size`, so later packing code can write to the end of a file or to an exact byte offset without duplicating stream-handling code.
+The C++ `file` module is used for binary file operations. It currently provides `copy`, `read`, `write`, `clear`, `append`, `append_file`, `write_at`, and `size`, so packing code does not duplicate stream-handling logic.
 
 ## Research scope
 
@@ -114,7 +121,8 @@ It is not authorization to deploy packed payloads against systems, users, or org
 ## Roadmap
 
 - [ ] PE32+ parser and validator
-- [ ] Minimal pack-and-restore proof of concept
+- [x] Minimal pack-and-restore proof of concept
+- [x] Payload compression and exact decompression
 - [ ] Runtime stub and entry-point transfer
 - [ ] Import and relocation strategy
 - [ ] Integrity and failure handling

@@ -8,6 +8,8 @@
 namespace file
 {
 bool			copy(std::string source, std::string destination);
+bool			read(std::string path, std::string &data);
+bool			write(std::string path, std::string data);
 bool			clear(std::string path);
 bool			append(std::string path, std::string data);
 bool			append_file(std::string path, std::string source);

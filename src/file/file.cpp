@@ -62,6 +62,56 @@ bool	file::copy(std::string source, std::string destination)
 	return (true);
 }
 
+bool	file::read(std::string path, std::string &data)
+{
+	std::ifstream	input;
+	std::streamoff	file_size;
+
+	input.open(path, std::ios::binary | std::ios::ate);
+	if (!input.is_open())
+		return (false);
+	file_size = input.tellg();
+	if (file_size < 0)
+	{
+		input.close();
+		return (false);
+	}
+	data.resize(static_cast<size_t>(file_size));
+	input.seekg(0);
+	if (file_size > 0)
+		input.read(data.data(), file_size);
+	if (!input)
+	{
+		input.close();
+		return (false);
+	}
+	input.close();
+	return (true);
+}
+
+bool	file::write(std::string path, std::string data)
+{
+	std::ofstream	output;
+
+	output.open(path, std::ios::binary | std::ios::trunc);
+	if (!output.is_open())
+		return (false);
+	output.write(data.data(), data.size());
+	if (!output)
+	{
+		output.close();
+		std::filesystem::remove(path);
+		return (false);
+	}
+	output.close();
+	if (output.fail())
+	{
+		std::filesystem::remove(path);
+		return (false);
+	}
+	return (true);
+}
+
 bool	file::clear(std::string path)
 {
 	std::ofstream	output;

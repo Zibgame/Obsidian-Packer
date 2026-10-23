@@ -11,46 +11,57 @@
 /* ************************************************************************** */
 
 #include "obsidian.hpp"
+#include "compression/compression.hpp"
 #include "file/file.hpp"
 
 #include <iostream>
+#include <string>
+
+bool	append_footer(std::string output_path, uint64_t compressed_size, uint64_t original_size)
+{
+	if (!file::append(output_path, OBSD))
+		return (false);
+	if (!file::append_uint64_le(output_path, compressed_size))
+		return (false);
+	if (!file::append_uint64_le(output_path, original_size))
+		return (false);
+	return (true);
+}
+
+bool	build_output(std::string stub_path, std::string payload_path)
+{
+	std::string	compressed;
+	std::string	output_path;
+	std::string	payload;
+
+	output_path = "output.exe";
+	if (!file::read(payload_path, payload))
+		return (false);
+	if (!compression::compress(payload, compressed))
+		return (false);
+	if (!file::copy(stub_path, output_path))
+		return (false);
+	if (!file::append(output_path, compressed))
+		return (false);
+	if (!append_footer(output_path, compressed.size(), payload.size()))
+		return (false);
+	std::cout << "Original size: " << payload.size() << " bytes\n";
+	std::cout << "Compressed size: " << compressed.size() << " bytes\n";
+	return (true);
+}
 
 int	main(int argc, char **argv)
 {
-	char			output_path[] = "output.exe";
-	std::streamoff	payload_size;
-
 	if (argc != 3)
 	{
 		std::cout << "Usage: " << OBSIDIAN_NAME << " <stub.exe> <payload>\n";
 		return (1);
 	}
-	payload_size = file::size(argv[2]);
-	if (payload_size < 0)
+	if (!build_output(argv[1], argv[2]))
 	{
-		std::cout << "obsidian: cannot read payload: " << argv[2] << '\n';
+		std::cout << "obsidian: packing failed\n";
 		return (1);
 	}
-	if (!file::copy(argv[1], output_path))
-	{
-		std::cout << "obsidian: cannot copy stub: " << argv[1] << '\n';
-		return (1);
-	}
-	if (!file::append_file(output_path, argv[2]))
-	{
-		std::cout << "obsidian: cannot append payload\n";
-		return (1);
-	}
-	if (!file::append(output_path, OBSD))
-	{
-		std::cout << "obsidian: cannot append data\n";
-		return (1);
-	}
-	if (!file::append_uint64_le(output_path, static_cast<uint64_t>(payload_size)))
-	{
-		std::cout << "obsidian: cannot append payload size\n";
-		return (1);
-	}
-	std::cout << "Packed binary created: .\\" << output_path << '\n';
+	std::cout << "Packed binary created: .\\output.exe\n";
 	return (0);
 }

@@ -16,5 +16,6 @@
 #define OBSIDIAN_NAME "obsidian"
 #define OBSIDIAN_VERSION "0.0.1-dev"
 #define OBSD "OBSD"
+#define OBSD_FOOTER_SIZE 20
 
 #endif
