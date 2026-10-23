@@ -12,17 +12,23 @@
 
 #include "obsidian.hpp"
 #include <windows.h>
+#include <cstdint>
 #include <iostream>
 
 int	main(void)
 {
+	LARGE_INTEGER	footer_offset;
 	LARGE_INTEGER	self_size;
-	char		self_path[MAX_PATH];
+	char			footer[12];
+	char			self_path[MAX_PATH];
 	char		message[] = "[OBSIDIAN STUB] Execution successful.\r\n";
+	int			index;
 	DWORD		path_length;
+	DWORD		read_size;
 	DWORD		written;
 	HANDLE		output;
 	HANDLE		self_file;
+	uint64_t		payload_size;
 
 	output = GetStdHandle(STD_OUTPUT_HANDLE);
 	if (output == INVALID_HANDLE_VALUE)
@@ -39,10 +45,45 @@ int	main(void)
 		return (1);
 
 	if (!GetFileSizeEx(self_file, &self_size))
+	{
+		CloseHandle(self_file);
 		return (1);
-
-	std::cout << self_size.QuadPart << '\n';
+	}
+	if (self_size.QuadPart < 12)
+	{
+		CloseHandle(self_file);
+		return (1);
+	}
+	footer_offset.QuadPart = self_size.QuadPart - 12;
+	if (!SetFilePointerEx(self_file, footer_offset, NULL, FILE_BEGIN))
+	{
+		CloseHandle(self_file);
+		return (1);
+	}
+	if (!ReadFile(self_file, footer, sizeof(footer), &read_size, NULL))
+	{
+		CloseHandle(self_file);
+		return (1);
+	}
+	if (read_size != sizeof(footer))
+	{
+		CloseHandle(self_file);
+		return (1);
+	}
+	if (footer[0] != OBSD[0] || footer[1] != OBSD[1] || footer[2] != OBSD[2] || footer[3] != OBSD[3])
+	{
+		CloseHandle(self_file);
+		return (1);
+	}
+	payload_size = 0;
+	index = 0;
+	while (index < 8)
+	{
+		payload_size |= static_cast<uint64_t>(static_cast<unsigned char>(footer[index + 4])) << (index * 8);
+		index++;
+	}
 	if (!CloseHandle(self_file))
 		return (1);
+	std::cout << payload_size << '\n';
 	return (0);
 }

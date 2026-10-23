@@ -89,6 +89,8 @@ obsidian.exe obsidian-stub.exe
 
 The current test copies the supplied stub to `obsidian-pack.exe` in the repository root, then appends the five ASCII bytes `hello`, the `OBSD` marker, and the payload length as an 8-byte little-endian `uint64_t`. It does not yet parse or modify PE structures.
 
+The runtime stub reads the final 12 bytes of its own executable, rejects the file when the `OBSD` marker is absent, and prints the decoded payload length.
+
 ## File helpers
 
 The C++ `file` module is used for binary file operations. It currently provides `copy`, `clear`, `append`, `write_at`, and `size`, so later packing code can write to the end of a file or to an exact byte offset without duplicating stream-handling code.
