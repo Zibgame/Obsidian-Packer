@@ -14,16 +14,21 @@
 #include "file/file.hpp"
 
 #include <iostream>
-#include <string>
 
 int	main(int argc, char **argv)
 {
-	char			output_path[] = "obsidian-pack.exe";
-	std::string	payload = "hello";
+	char			output_path[] = "output.exe";
+	std::streamoff	payload_size;
 
-	if (argc != 2)
+	if (argc != 3)
 	{
-		std::cout << "Usage: " << OBSIDIAN_NAME << " <stub.exe>\n";
+		std::cout << "Usage: " << OBSIDIAN_NAME << " <stub.exe> <payload>\n";
+		return (1);
+	}
+	payload_size = file::size(argv[2]);
+	if (payload_size < 0)
+	{
+		std::cout << "obsidian: cannot read payload: " << argv[2] << '\n';
 		return (1);
 	}
 	if (!file::copy(argv[1], output_path))
@@ -31,9 +36,9 @@ int	main(int argc, char **argv)
 		std::cout << "obsidian: cannot copy stub: " << argv[1] << '\n';
 		return (1);
 	}
-	if (!file::append(output_path, payload))
+	if (!file::append_file(output_path, argv[2]))
 	{
-		std::cout << "obsidian: cannot append data\n";
+		std::cout << "obsidian: cannot append payload\n";
 		return (1);
 	}
 	if (!file::append(output_path, OBSD))
@@ -41,7 +46,7 @@ int	main(int argc, char **argv)
 		std::cout << "obsidian: cannot append data\n";
 		return (1);
 	}
-	if (!file::append_uint64_le(output_path, payload.size()))
+	if (!file::append_uint64_le(output_path, static_cast<uint64_t>(payload_size)))
 	{
 		std::cout << "obsidian: cannot append payload size\n";
 		return (1);

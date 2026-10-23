@@ -94,6 +94,46 @@ bool	file::append(std::string path, std::string data)
 	return (true);
 }
 
+bool	file::append_file(std::string path, std::string source)
+{
+	char			buffer[4096];
+	std::ifstream	input;
+	std::ofstream	output;
+	std::streamsize	read_size;
+
+	input.open(source, std::ios::binary);
+	if (!input.is_open())
+		return (false);
+	output.open(path, std::ios::binary | std::ios::app);
+	if (!output.is_open())
+	{
+		input.close();
+		return (false);
+	}
+	while (input.read(buffer, sizeof(buffer)) || input.gcount() > 0)
+	{
+		read_size = input.gcount();
+		output.write(buffer, read_size);
+		if (!output)
+		{
+			input.close();
+			output.close();
+			return (false);
+		}
+	}
+	if (input.bad())
+	{
+		input.close();
+		output.close();
+		return (false);
+	}
+	input.close();
+	output.close();
+	if (output.fail())
+		return (false);
+	return (true);
+}
+
 bool	file::append_uint64_le(std::string path, uint64_t value)
 {
 	char	data[8];

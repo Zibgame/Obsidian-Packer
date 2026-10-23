@@ -7,6 +7,7 @@
 *.lib
 *.dll
 *.exe
+extracted.bin
 *.pdb
 *.ilk
 

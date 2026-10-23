@@ -81,19 +81,19 @@ make -j
 
 For the current test phase, the build writes the main `obsidian` executable and the separate `obsidian-stub` runtime executable directly to the repository root. Windows builds use the `.exe` extension. Use `make clean` to remove every generated build artifact.
 
-The current packer scaffold accepts one runtime stub path:
+The current packer scaffold accepts a runtime stub and a payload path:
 
 ```console
-obsidian.exe obsidian-stub.exe
+obsidian.exe obsidian-stub.exe message.txt
 ```
 
-The current test copies the supplied stub to `obsidian-pack.exe` in the repository root, then appends the five ASCII bytes `hello`, the `OBSD` marker, and the payload length as an 8-byte little-endian `uint64_t`. It does not yet parse or modify PE structures.
+The current test copies the supplied stub to `output.exe` in the repository root, then appends the payload bytes, the `OBSD` marker, and the payload length as an 8-byte little-endian `uint64_t`. It does not yet parse or modify PE structures.
 
-The runtime stub reads the final 12 bytes of its own executable, rejects the file when the `OBSD` marker is absent, and prints the decoded payload length.
+The runtime stub reads the final 12 bytes of its own executable, rejects the file when the `OBSD` marker is absent, calculates the payload offset, and writes the recovered data to `extracted.bin` without executing it.
 
 ## File helpers
 
-The C++ `file` module is used for binary file operations. It currently provides `copy`, `clear`, `append`, `write_at`, and `size`, so later packing code can write to the end of a file or to an exact byte offset without duplicating stream-handling code.
+The C++ `file` module is used for binary file operations. It currently provides `copy`, `clear`, `append`, `append_file`, `write_at`, and `size`, so later packing code can write to the end of a file or to an exact byte offset without duplicating stream-handling code.
 
 ## Research scope
 
