@@ -87,7 +87,7 @@ The current packer scaffold accepts one runtime stub path:
 obsidian.exe obsidian-stub.exe
 ```
 
-The path is currently checked for readability only. PE parsing and packing are not implemented yet.
+The current test copies the supplied stub to `obsidian-pack.exe` in the repository root, then appends the five ASCII bytes `hello` as a PE overlay. It does not yet parse or modify PE structures.
 
 ## Research scope
 

@@ -19,10 +19,12 @@ DEPENDENCIES := $(OBJECTS:.o=.d) $(STUB_OBJECTS:.o=.d)
 ifeq ($(OS),Windows_NT)
 TARGET := $(BIN_DIR)/$(NAME).exe
 STUB_TARGET := $(BIN_DIR)/$(NAME)-stub.exe
+PACKED_TARGET := $(NAME)-pack.exe
 JOBS ?= $(NUMBER_OF_PROCESSORS)
 else
 TARGET := $(BIN_DIR)/$(NAME)
 STUB_TARGET := $(BIN_DIR)/$(NAME)-stub
+PACKED_TARGET := $(NAME)-pack
 JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
 endif
 
@@ -80,6 +82,7 @@ clean:
 	$(call remove-dir,build)
 	$(call remove-file,$(TARGET))
 	$(call remove-file,$(STUB_TARGET))
+	$(call remove-file,$(PACKED_TARGET))
 
 re: clean
 	+$(MAKE) --jobs=$(JOBS) all
