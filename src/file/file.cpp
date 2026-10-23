@@ -238,3 +238,14 @@ std::streamoff	file::size(std::string path)
 	input.close();
 	return (file_size);
 }
+
+bool	file::exists(std::string path)
+{
+	std::ifstream	input;
+
+	input.open(path, std::ios::binary);
+	if (!input.is_open())
+		return (false);
+	input.close();
+	return (true);
+}

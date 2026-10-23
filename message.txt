@@ -1,2 +1,0 @@
-OBSIDIAN payload integration test.
-This file is extracted without executing its contents.

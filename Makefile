@@ -12,7 +12,7 @@ OBJ_DIR := build/obj
 BIN_DIR := .
 MAIN_SOURCES := $(wildcard $(SRC_DIR)/*.cpp)
 STUB_SOURCES := $(wildcard $(STUB_DIR)/*.cpp)
-COMMON_SOURCES := $(wildcard $(SRC_DIR)/file/*.cpp) $(wildcard $(SRC_DIR)/compression/*.cpp)
+COMMON_SOURCES := $(wildcard $(SRC_DIR)/file/*.cpp) $(wildcard $(SRC_DIR)/compression/*.cpp) $(wildcard $(SRC_DIR)/pe/*.cpp)
 MAIN_OBJECTS := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(MAIN_SOURCES))
 STUB_OBJECTS := $(patsubst $(STUB_DIR)/%.cpp,$(OBJ_DIR)/stub/%.o,$(STUB_SOURCES))
 COMMON_OBJECTS := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(COMMON_SOURCES))
@@ -62,7 +62,7 @@ endif
 
 .DEFAULT_GOAL := all
 
-.PHONY: all parallel clean re
+.PHONY: all parallel clean re examples
 
 all: $(TARGET) $(STUB_TARGET)
 
@@ -95,3 +95,14 @@ re: clean
 	+$(MAKE) --jobs=$(JOBS) all
 
 -include $(DEPENDENCIES)
+
+EXAMPLE_DIR := examples
+EXAMPLE_BINS := $(EXAMPLE_DIR)/hello.exe $(EXAMPLE_DIR)/tls_demo.exe $(EXAMPLE_DIR)/args_echo.exe
+
+examples: $(EXAMPLE_BINS)
+
+$(EXAMPLE_DIR)/%.exe: $(EXAMPLE_DIR)/%.c $(STUB_TARGET)
+	$(CXX) $(CXXFLAGS) $< -o $@
+
+clean-examples:
+	$(call remove-dir,$(EXAMPLE_DIR))
