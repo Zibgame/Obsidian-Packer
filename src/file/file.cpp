@@ -94,6 +94,21 @@ bool	file::append(std::string path, std::string data)
 	return (true);
 }
 
+bool	file::append_uint64_le(std::string path, uint64_t value)
+{
+	char	data[8];
+	int	index;
+
+	index = 0;
+	while (index < 8)
+	{
+		data[index] = static_cast<char>(value & 0xff);
+		value = value >> 8;
+		index++;
+	}
+	return (file::append(path, std::string(data, 8)));
+}
+
 bool	file::write_at(std::string path, std::streamoff offset, std::string data)
 {
 	std::fstream	output;
