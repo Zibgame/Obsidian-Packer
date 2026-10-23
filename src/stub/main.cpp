@@ -15,7 +15,9 @@
 
 int	main(void)
 {
+	char		self_path[MAX_PATH];
 	char		message[] = "[OBSIDIAN STUB] Execution successful.\r\n";
+	DWORD		path_length;
 	DWORD		written;
 	HANDLE		output;
 
@@ -23,6 +25,9 @@ int	main(void)
 	if (output == INVALID_HANDLE_VALUE)
 		return (1);
 	if (!WriteFile(output, message, sizeof(message) - 1, &written, NULL))
+		return (1);
+	path_length = GetModuleFileNameA(NULL, self_path, MAX_PATH);
+	if (path_length == 0 || path_length == MAX_PATH)
 		return (1);
 	return (0);
 }
