@@ -89,6 +89,10 @@ obsidian.exe obsidian-stub.exe
 
 The current test copies the supplied stub to `obsidian-pack.exe` in the repository root, then appends the five ASCII bytes `hello` as a PE overlay. It does not yet parse or modify PE structures.
 
+## File helpers
+
+The C++ `file` module is used for binary file operations. It currently provides `copy`, `clear`, `append`, `write_at`, and `size`, so later packing code can write to the end of a file or to an exact byte offset without duplicating stream-handling code.
+
 ## Research scope
 
 OBSIDIAN is built for controlled offensive-security research, packer analysis, reverse engineering, defensive testing, and authorized laboratory evaluation. It may be used to study how security products react to binary transformations and where static or heuristic detections originate.
