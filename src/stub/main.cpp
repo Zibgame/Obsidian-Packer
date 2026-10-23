@@ -15,6 +15,7 @@
 
 int	main(void)
 {
+	LARGE_INTEGER	self_size;
 	char		self_path[MAX_PATH];
 	char		message[] = "[OBSIDIAN STUB] Execution successful.\r\n";
 	DWORD		path_length;
@@ -34,6 +35,9 @@ int	main(void)
 
 	self_file = CreateFileA(self_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (self_file == INVALID_HANDLE_VALUE)
+		return (1);
+
+	if (!GetFileSizeEx(self_file, &self_size))
 		return (1);
 	if (!CloseHandle(self_file))
 		return (1);
