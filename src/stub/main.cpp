@@ -39,6 +39,8 @@ int	main(void)
 
 	if (!GetFileSizeEx(self_file, &self_size))
 		return (1);
+
+	printf("%lld\n", self_size.QuadPart);
 	if (!CloseHandle(self_file))
 		return (1);
 	return (0);
