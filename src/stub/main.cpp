@@ -12,6 +12,7 @@
 
 #include "obsidian.hpp"
 #include <windows.h>
+#include <iostream>
 
 int	main(void)
 {
@@ -40,7 +41,7 @@ int	main(void)
 	if (!GetFileSizeEx(self_file, &self_size))
 		return (1);
 
-	printf("%lld\n", self_size.QuadPart);
+	std::cout << self_size.QuadPart << '\n';
 	if (!CloseHandle(self_file))
 		return (1);
 	return (0);
