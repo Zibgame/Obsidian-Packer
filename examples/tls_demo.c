@@ -1,6 +1,3 @@
-/* tls_demo: a payload with a real TLS callback and TLS data.
- * The stub must allocate the TLS slot and run the callback
- * (DLL_PROCESS_ATTACH) before the entry point. */
 #include <stdio.h>
 #include <windows.h>
 

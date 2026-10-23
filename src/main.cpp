@@ -50,7 +50,7 @@ bool build_output(std::string stub_path, std::string payload_path)
 
     if (!file::read(stub_path, stub))
         return (false);
-    // packing the stub into itself would recurse forever: refuse
+    // A stub cannot be packed into itself.
     if (stub == payload)
     {
         std::cout << "obsidian: refusing to pack the stub into itself\n";
@@ -80,7 +80,7 @@ bool build_output(std::string stub_path, std::string payload_path)
     return (true);
 }
 
-// locate the default stub: current directory, build/, next to the packer
+// Look for the bundled runtime stub.
 bool	find_default_stub(std::string &stub_path)
 {
 	std::string	candidates[4];

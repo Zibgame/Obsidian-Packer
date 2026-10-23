@@ -1,4 +1,3 @@
-/* args_echo: checks argument forwarding through the PEB */
 #include <stdio.h>
 
 int	main(int argc, char **argv)

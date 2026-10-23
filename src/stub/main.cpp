@@ -39,7 +39,6 @@ uintptr_t get_original_entry_point(char *obsram, uint32_t obsram_size, PEInfo &i
     return (reinterpret_cast<uintptr_t>(obsram) + entry_rva);
 }
 
-// rebuild a uint32 from 4 raw bytes, little-endian (smallest byte first)
 uint32_t	read_uint32_le(char *data)
 {
 	uint32_t	value;
@@ -55,7 +54,6 @@ uint32_t	read_uint32_le(char *data)
 	return (value);
 }
 
-// rebuild a uint16 from 2 raw bytes, little-endian (smallest byte first)
 uint16_t	read_uint16_le(char *data)
 {
 	uint16_t	value;
@@ -66,7 +64,6 @@ uint16_t	read_uint16_le(char *data)
 	return (value);
 }
 
-// rebuild a uint64 from 8 raw bytes, little-endian (smallest byte first)
 uint64_t	read_uint64_le(char *data)
 {
 	uint64_t	value;
@@ -82,14 +79,12 @@ uint64_t	read_uint64_le(char *data)
 	return (value);
 }
 
-// open our own exe on disk so we can read the payload we carry
 HANDLE	open_self(LARGE_INTEGER &self_size)
 {
 	char	self_path[MAX_PATH];
 	DWORD	path_length;
 	HANDLE	self_file;
 
-	// NULL = current process, gives us the full path of this .exe
 	path_length = GetModuleFileNameA(NULL, self_path, MAX_PATH);
 	if (path_length == 0 || path_length >= MAX_PATH)
 		return (INVALID_HANDLE_VALUE);
@@ -104,18 +99,15 @@ HANDLE	open_self(LARGE_INTEGER &self_size)
 	return (self_file);
 }
 
-// cut the last 20 bytes of the file and decode the footer:
-// [OBSD][compressed size: u64 LE][original size: u64 LE]
+// Footer: marker, compressed size, original size.
 bool	read_footer(HANDLE self_file, LARGE_INTEGER self_size, uint64_t &compressed_size, uint64_t &original_size)
 {
 	LARGE_INTEGER	footer_offset;
 	char			footer[OBSD_FOOTER_SIZE];
 	DWORD			read_size;
 
-	// the file must at least contain a footer
 	if (self_size.QuadPart < OBSD_FOOTER_SIZE)
 		return (false);
-	// footer is the last 20 bytes of the file
 	footer_offset.QuadPart = self_size.QuadPart - OBSD_FOOTER_SIZE;
 	if (!SetFilePointerEx(self_file, footer_offset, NULL, FILE_BEGIN))
 		return (false);
@@ -123,18 +115,15 @@ bool	read_footer(HANDLE self_file, LARGE_INTEGER self_size, uint64_t &compressed
 		return (false);
 	if (read_size != sizeof(footer))
 		return (false);
-	// no valid marker means we are a plain stub with no payload
 	if (footer[0] != OBSD[0] || footer[1] != OBSD[1] || footer[2] != OBSD[2] || footer[3] != OBSD[3])
 		return (false);
 	compressed_size = read_uint64_le(footer + 4);
 	original_size = read_uint64_le(footer + 12);
-	// refuse sizes that would read outside the file
 	if (compressed_size > static_cast<uint64_t>(self_size.QuadPart - OBSD_FOOTER_SIZE))
 		return (false);
 	return (true);
 }
 
-// compressed payload sits just before the footer, read it by 4096-byte chunks
 bool	read_payload(HANDLE self_file, LARGE_INTEGER self_size, uint64_t compressed_size, std::string &payload)
 {
 	LARGE_INTEGER	payload_offset;
@@ -145,7 +134,6 @@ bool	read_payload(HANDLE self_file, LARGE_INTEGER self_size, uint64_t compressed
 
 	if (compressed_size > payload.max_size())
 		return (false);
-	// payload start = footer start minus compressed size
 	payload_offset.QuadPart = self_size.QuadPart - OBSD_FOOTER_SIZE - static_cast<LONGLONG>(compressed_size);
 	if (!SetFilePointerEx(self_file, payload_offset, NULL, FILE_BEGIN))
 		return (false);
@@ -154,13 +142,11 @@ bool	read_payload(HANDLE self_file, LARGE_INTEGER self_size, uint64_t compressed
 	position = 0;
 	while (remaining > 0)
 	{
-		// cap each ReadFile at 4096 bytes
 		to_read = 4096;
 		if (remaining < to_read)
 			to_read = static_cast<DWORD>(remaining);
 		if (!ReadFile(self_file, payload.data() + position, to_read, &read_size, NULL))
 			return (false);
-		// a short read means the file changed under us, stop here
 		if (read_size != to_read)
 			return (false);
 		remaining -= read_size;
@@ -169,7 +155,6 @@ bool	read_payload(HANDLE self_file, LARGE_INTEGER self_size, uint64_t compressed
 	return (true);
 }
 
-// walk our own loaded image's section table and locate the .obsram section
 bool	find_obsram(char *&obsram, uint32_t &obsram_size)
 {
 	char	*base;
@@ -181,7 +166,6 @@ bool	find_obsram(char *&obsram, uint32_t &obsram_size)
 
 	obsram = NULL;
 	obsram_size = 0;
-	// HMODULE of the current process == base address of our loaded image
 	base = reinterpret_cast<char *>(GetModuleHandleA(NULL));
 	if (base == NULL)
 		return (false);
@@ -199,7 +183,6 @@ bool	find_obsram(char *&obsram, uint32_t &obsram_size)
 		char	*header;
 
 		header = section_table + static_cast<size_t>(i) * 40;
-		// name field is 8 bytes: ".obsram" plus its NUL terminator
 		if (std::memcmp(header, ".obsram", 8) == 0)
 		{
 			obsram_size = read_uint32_le(header + 8);
@@ -213,15 +196,12 @@ bool	find_obsram(char *&obsram, uint32_t &obsram_size)
 	return (false);
 }
 
-// rebuild the original image in .obsram, file layout to memory layout
 bool	restore_sections(std::string &payload, PEInfo &info, char *obsram, uint32_t obsram_size)
 {
 	size_t	i;
 
-	// .obsram must be able to hold the whole original image layout
 	if (obsram_size < info.optional.size_of_image)
 		return (false);
-	// copy the original headers too, without them the image starts with zeros
 	if (info.optional.size_of_headers > payload.size()
 		|| info.optional.size_of_headers > obsram_size)
 		return (false);
@@ -237,15 +217,12 @@ bool	restore_sections(std::string &payload, PEInfo &info, char *obsram, uint32_t
 		virtual_size = section.virtual_size;
 		if (virtual_size == 0)
 			virtual_size = copy_size;
-		// never copy more than the section claims in memory
 		if (copy_size > virtual_size)
 			copy_size = virtual_size;
-		// section must fit inside .obsram
 		if (section.virtual_address > obsram_size)
 			return (false);
 		if (copy_size > obsram_size - section.virtual_address)
 			return (false);
-		// source must fit inside the decompressed file
 		if (section.raw_offset > payload.size())
 			return (false);
 		if (copy_size > payload.size() - section.raw_offset)
@@ -258,7 +235,7 @@ bool	restore_sections(std::string &payload, PEInfo &info, char *obsram, uint32_t
 	return (true);
 }
 
-// delta = obsram - ImageBase: data was built for ImageBase, lives at obsram
+// The image is restored at .obsram, not at ImageBase.
 bool	patch_relocations(std::string &payload, PEInfo &info, char *obsram, uint32_t obsram_size, size_t &patched)
 {
 	size_t	optional_offset;
@@ -280,14 +257,12 @@ bool	patch_relocations(std::string &payload, PEInfo &info, char *obsram, uint32_
 	directory_count = read_uint32_le(payload.data() + optional_offset + 108);
 	if (directory_count > (static_cast<uint32_t>(info.coff.size_of_optional_header) - 112U) / 8U)
 		return (false);
-	// BASE RELOCATION is data directory index 5
 	if (directory_count <= 5)
 		return (true);
 	reloc_rva = read_uint32_le(payload.data() + optional_offset + 152);
 	reloc_size = read_uint32_le(payload.data() + optional_offset + 156);
 	if (reloc_rva == 0 && reloc_size == 0)
 	{
-		// no relocation table: only safe when loaded at the preferred base
 		if ((uintptr_t)obsram != info.optional.image_base)
 		{
 			std::cout << "obsidian: original has no relocations and cannot load at its ImageBase\n";
@@ -314,7 +289,6 @@ bool	patch_relocations(std::string &payload, PEInfo &info, char *obsram, uint32_
 		block = payload.data() + position;
 		page_rva = read_uint32_le(block);
 		block_size = read_uint32_le(block + 4);
-		// block header plus a whole number of 2-byte entries
 		if (block_size < 8 || block_size > end - position || (block_size & 1) != 0)
 			return (false);
 		entry_count = (block_size - 8) / 2;
@@ -329,17 +303,14 @@ bool	patch_relocations(std::string &payload, PEInfo &info, char *obsram, uint32_
 			value = read_uint16_le(block + 8 + entry * 2);
 			type = value >> 12;
 			displacement = value & 0x0FFF;
-			// ABSOLUTE entries are padding, skip them
 			if (type != 0)
 			{
-				// DIR64 is the only real relocation type in a pure PE32+
 				if (type != 10)
 				{
 					std::cout << "obsidian: unsupported relocation type " << type << "\n";
 					return (false);
 				}
 				rva = static_cast<uint64_t>(page_rva) + displacement;
-				// the corrected value must lie inside the restored image
 				if (rva + 8 > info.optional.size_of_image || rva + 8 > obsram_size)
 					return (false);
 				*(uint64_t *)(obsram + rva) += reinterpret_cast<uintptr_t>(obsram)
@@ -353,7 +324,6 @@ bool	patch_relocations(std::string &payload, PEInfo &info, char *obsram, uint32_
 	return (true);
 }
 
-// helper: read one uint64 at a file RVA, false if it does not fit
 bool	read_u64_at(std::string &payload, PEInfo &info, uint32_t rva, uint64_t &value)
 {
 	size_t	offset;
@@ -367,8 +337,7 @@ bool	read_u64_at(std::string &payload, PEInfo &info, uint32_t rva, uint64_t &val
 	return (true);
 }
 
-// resolve the original imports inside the restored image:
-// walk the import descriptors, load every DLL, patch the IAT entries
+// Resolve imports in the restored IAT.
 bool	resolve_imports(std::string &payload, PEInfo &info, char *obsram, uint32_t obsram_size, size_t &dll_count, size_t &func_count)
 {
 	size_t	optional_offset;
@@ -391,7 +360,6 @@ bool	resolve_imports(std::string &payload, PEInfo &info, char *obsram, uint32_t 
 	directory_count = read_uint32_le(payload.data() + optional_offset + 108);
 	if (directory_count > (static_cast<uint32_t>(info.coff.size_of_optional_header) - 112U) / 8U)
 		return (false);
-	// IMPORT is data directory index 1
 	if (directory_count <= 1)
 		return (true);
 	import_rva = read_uint32_le(payload.data() + optional_offset + 120);
@@ -428,10 +396,9 @@ bool	resolve_imports(std::string &payload, PEInfo &info, char *obsram, uint32_t 
 		forwarder = read_uint32_le(descriptor + 8);
 		name_rva = read_uint32_le(descriptor + 12);
 		iat = read_uint32_le(descriptor + 16);
-		// null descriptor marks the end of the table
 		if (lookup == 0 && timestamp == 0 && forwarder == 0 && name_rva == 0 && iat == 0)
 			break ;
-		// bound imports (non-zero timestamp) are incompatible with our restoration
+		// Bound imports cannot be restored safely here.
 		if (timestamp != 0)
 		{
 			std::cout << "obsidian: bound imports are not supported\n";
@@ -454,11 +421,9 @@ bool	resolve_imports(std::string &payload, PEInfo &info, char *obsram, uint32_t 
 			std::cout << "obsidian: cannot load " << dll_name << " (error " << GetLastError() << ")\n";
 			return (false);
 		}
-		// names live in the OriginalFirstThunk array, fall back to the IAT itself
 		thunk_rva = lookup;
 		if (thunk_rva == 0)
 			thunk_rva = iat;
-		// the whole thunk array must lie inside the restored image
 		if (thunk_rva >= info.optional.size_of_image)
 			return (false);
 		index = 0;
@@ -468,24 +433,19 @@ bool	resolve_imports(std::string &payload, PEInfo &info, char *obsram, uint32_t 
 			uint64_t	address;
 			FARPROC	function;
 
-			// guard against uint32 wraparound on huge thunk tables
 			if (static_cast<uint64_t>(thunk_rva) + (index + 1) * 8 > info.optional.size_of_image)
 				return (false);
 			if (!read_u64_at(payload, info, thunk_rva + static_cast<uint32_t>(index) * 8, thunk))
 				return (false);
-			// null thunk marks the end of this import array
 			if (thunk == 0)
 				break ;
-			// the IAT slot must lie inside the restored image
 			if (static_cast<uint64_t>(iat) + (index + 1) * 8 > info.optional.size_of_image
 				|| static_cast<uint64_t>(iat) + (index + 1) * 8 > obsram_size)
 				return (false);
-			// high bit set means import by ordinal
 			if ((thunk >> 63) != 0)
 				function = GetProcAddress(module, MAKEINTRESOURCEA(static_cast<uint16_t>(thunk)));
 			else
 			{
-				// low 32 bits are the RVA of a Hint/Name entry: 2-byte hint, then name
 				uint32_t	name_rva_entry;
 				size_t	func_offset;
 				size_t	func_available;
@@ -523,8 +483,7 @@ bool	resolve_imports(std::string &payload, PEInfo &info, char *obsram, uint32_t 
 	return (true);
 }
 
-// register the x64 exception table (.pdata) of the restored image with Windows:
-// pure registration, RtlAddFunctionTable only reads the RUNTIME_FUNCTION array
+// Register the restored x64 exception table.
 bool	register_exceptions(std::string &payload, PEInfo &info, char *obsram, uint32_t obsram_size)
 {
 	size_t	optional_offset;
@@ -541,7 +500,6 @@ bool	register_exceptions(std::string &payload, PEInfo &info, char *obsram, uint3
 	directory_count = read_uint32_le(payload.data() + optional_offset + 108);
 	if (directory_count > (static_cast<uint32_t>(info.coff.size_of_optional_header) - 112U) / 8U)
 		return (false);
-	// EXCEPTION is data directory index 3
 	if (directory_count <= 3)
 		return (true);
 	pdata_rva = read_uint32_le(payload.data() + optional_offset + 136);
@@ -550,7 +508,6 @@ bool	register_exceptions(std::string &payload, PEInfo &info, char *obsram, uint3
 		return (true);
 	if (pdata_rva == 0 || pdata_size == 0)
 		return (false);
-	// each RUNTIME_FUNCTION is exactly 12 bytes
 	if ((pdata_size % 12) != 0)
 		return (false);
 	if (static_cast<uint64_t>(pdata_rva) + pdata_size > info.optional.size_of_image
@@ -565,7 +522,6 @@ bool	register_exceptions(std::string &payload, PEInfo &info, char *obsram, uint3
 	return (true);
 }
 
-// count the TLS callbacks of the original: parsed for the audit, never called
 bool	audit_tls(std::string &payload, PEInfo &info, size_t &callbacks)
 {
 	size_t	optional_offset;
@@ -586,7 +542,6 @@ bool	audit_tls(std::string &payload, PEInfo &info, size_t &callbacks)
 	directory_count = read_uint32_le(payload.data() + optional_offset + 108);
 	if (directory_count > (static_cast<uint32_t>(info.coff.size_of_optional_header) - 112U) / 8U)
 		return (false);
-	// TLS is data directory index 9
 	if (directory_count <= 9)
 		return (true);
 	tls_rva = read_uint32_le(payload.data() + optional_offset + 184);
@@ -595,13 +550,11 @@ bool	audit_tls(std::string &payload, PEInfo &info, size_t &callbacks)
 		return (true);
 	if (tls_rva == 0 || tls_size == 0)
 		return (false);
-	// AddressOfCallBacks sits at offset 24 of the 64-byte TLS structure
 	if (!rva_to_offset(payload, info, tls_rva, offset, available) || available < 40)
 		return (false);
 	callbacks_rva = read_uint64_le(payload.data() + offset + 24);
 	if (callbacks_rva == 0)
 		return (true);
-	// AddressOfCallBacks is an absolute VA, convert it to an RVA first
 	if (callbacks_rva < info.optional.image_base
 		|| callbacks_rva - info.optional.image_base > info.optional.size_of_image)
 		return (false);
@@ -622,7 +575,6 @@ bool	audit_tls(std::string &payload, PEInfo &info, size_t &callbacks)
 }
 
 
-// map a permission bitmask (1 read, 2 write, 4 execute) to VirtualProtect
 DWORD	perm_to_protect(DWORD perm)
 {
 	if ((perm & 4) != 0 && (perm & 2) != 0)
@@ -634,7 +586,7 @@ DWORD	perm_to_protect(DWORD perm)
 	return (PAGE_READONLY);
 }
 
-// final protections, last step: per-page OR of read/write/execute bits
+// Combine section permissions before changing page protection.
 bool	protect_sections(std::string &payload, PEInfo &info, char *obsram, uint32_t obsram_size)
 {
 	std::vector<DWORD>	pages;
@@ -664,8 +616,6 @@ bool	protect_sections(std::string &payload, PEInfo &info, char *obsram, uint32_t
 		if (static_cast<uint64_t>(section.virtual_address) + size > obsram_size)
 			return (false);
 		flags = section.characteristics;
-		// section characteristics: EXEC 0x20000000, READ 0x40000000, WRITE 0x80000000
-		// read is implicit, write and execute are OR-ed per page
 		perm = 1;
 		if ((flags & 0x20000000U) != 0)
 			perm |= 4;
@@ -680,7 +630,6 @@ bool	protect_sections(std::string &payload, PEInfo &info, char *obsram, uint32_t
 			page++;
 		}
 	}
-	// apply contiguous runs of equal permission with one VirtualProtect call each
 	size_t	run_start;
 	DWORD	old_value;
 
@@ -699,7 +648,6 @@ bool	protect_sections(std::string &payload, PEInfo &info, char *obsram, uint32_t
 		while (run_end < page_count && pages[run_end] == pages[run_start])
 			run_end++;
 		byte_count = (run_end - run_start) * 4096;
-		// clamp the final run to the real end of .obsram
 		if (run_start * 4096ULL + byte_count > obsram_size)
 			byte_count = obsram_size - run_start * 4096;
 		if (!VirtualProtect(obsram + run_start * 4096, byte_count,
@@ -714,15 +662,13 @@ bool	protect_sections(std::string &payload, PEInfo &info, char *obsram, uint32_t
 	return (true);
 }
 
-// minimal TEB view: ThreadLocalStoragePointer sits at offset 0x58 on x64
-// and the TEB self-pointer sits at gs:0x30
+// Only fields needed to extend the TLS array.
 struct	TEB_MINI
 {
 	char	pad[0x58];
 	char	**thread_local_storage_pointer;
 };
 
-// minimal PEB loader structures: enough to walk the module list
 struct	LIST_ENTRY_MINI
 {
 	char	*flink;
@@ -736,7 +682,7 @@ struct	LDR_ENTRY_MINI
 	char	*dll_base;
 };
 
-// next index = one past the highest index the loader actually assigned
+// Return the next TLS index assigned by the loader.
 size_t	next_tls_index(void)
 {
 	char	*peb;
@@ -759,13 +705,11 @@ size_t	next_tls_index(void)
 		uint32_t	size_of_image;
 
 		base = reinterpret_cast<LDR_ENTRY_MINI *>(cur)->dll_base;
-		// SizeOfImage sits right after DllBase in the loader entry
 		size_of_image = *reinterpret_cast<uint32_t *>(cur + 0x40);
 		if (base != NULL && size_of_image != 0
 			&& base[0] == 'M' && base[1] == 'Z')
 		{
 			e_lfanew = read_uint32_le(base + 0x3C);
-			// headers must stay in a sane range before we dereference them
 			if (e_lfanew >= 0x40 && e_lfanew + 248 < size_of_image
 				&& base[e_lfanew] == 'P' && base[e_lfanew + 1] == 'E')
 			{
@@ -776,7 +720,6 @@ size_t	next_tls_index(void)
 				optional = base + e_lfanew + 24;
 				if (read_uint16_le(optional) == 0x20B)
 				{
-					// TLS is data directory index 9: RVA at optional+184
 					tls_rva = read_uint32_le(optional + 184);
 					tls_size = read_uint32_le(optional + 188);
 					if (tls_rva != 0 && tls_size != 0
@@ -786,7 +729,6 @@ size_t	next_tls_index(void)
 						uint32_t	assigned;
 
 						index_va = read_uint64_le(base + tls_rva + 16);
-						// the assigned index must point inside that module
 						if (index_va >= reinterpret_cast<uint64_t>(base)
 							&& index_va + 4 <= reinterpret_cast<uint64_t>(base) + size_of_image)
 						{
@@ -807,7 +749,7 @@ size_t	next_tls_index(void)
 	}
 	return (next);
 }
-// prepare TLS like the loader: extend TEB->ThreadLocalStoragePointer
+// Add a TLS block for the restored image on the current thread.
 bool	prepare_tls(std::string &payload, PEInfo &info, char *obsram,
 	uint32_t obsram_size, size_t &callbacks, bool &tls_ready)
 {
@@ -833,7 +775,6 @@ bool	prepare_tls(std::string &payload, PEInfo &info, char *obsram,
 	tls_ready = true;
 	optional_offset = static_cast<size_t>(info.dos.e_lfanew) + 24;
 	directory_count = read_uint32_le(obsram + optional_offset + 108);
-	// TLS is data directory index 9
 	if (directory_count <= 9)
 		return (true);
 	tls_rva = read_uint32_le(obsram + optional_offset + 184);
@@ -842,7 +783,6 @@ bool	prepare_tls(std::string &payload, PEInfo &info, char *obsram,
 		return (true);
 	if (tls_rva == 0 || tls_size == 0)
 		return (false);
-	// the 64-bit TLS structure is exactly 64 bytes
 	if (static_cast<uint64_t>(tls_rva) + 64 > info.optional.size_of_image
 		|| static_cast<uint64_t>(tls_rva) + 64 > obsram_size)
 		return (false);
@@ -852,7 +792,6 @@ bool	prepare_tls(std::string &payload, PEInfo &info, char *obsram,
 	index_va = read_uint64_le(tls_dir + 16);
 	callbacks_va = read_uint64_le(tls_dir + 24);
 	zero_fill = read_uint32_le(tls_dir + 32);
-	// those VAs were already relocated to their real address inside .obsram
 	if (start_va < reinterpret_cast<uint64_t>(obsram)
 		|| end_va > reinterpret_cast<uint64_t>(obsram) + obsram_size
 		|| end_va < start_va)
@@ -874,13 +813,11 @@ bool	prepare_tls(std::string &payload, PEInfo &info, char *obsram,
 		return (false);
 	}
 	raw_size = end_va - start_va;
-	// sanity guard on the data block size
 	if (raw_size + zero_fill > 16ULL * 1024 * 1024)
 	{
 		std::cout << "obsidian: TLS data block too large\n";
 		return (false);
 	}
-	// build the main thread data block: initial raw data then zero fill
 	thread_data = static_cast<char *>(HeapAlloc(GetProcessHeap(), 0, raw_size + zero_fill));
 	if (thread_data == NULL)
 	{
@@ -890,10 +827,8 @@ bool	prepare_tls(std::string &payload, PEInfo &info, char *obsram,
 	if (raw_size != 0)
 		std::copy_n(reinterpret_cast<char *>(start_va), raw_size, thread_data);
 	std::fill(thread_data + raw_size, thread_data + raw_size + zero_fill, '\0');
-	// derive the slot index from loader-written facts (see next_tls_index)
 	used = next_tls_index();
 	tls_array = reinterpret_cast<char **>(__readgsqword(0x58));
-	// consistency: loader array exists iff some module owns a TLS directory
 	if (tls_array == NULL && used != 0)
 	{
 		std::cout << "obsidian: TLS modules exist but the loader array is absent\n";
@@ -906,7 +841,6 @@ bool	prepare_tls(std::string &payload, PEInfo &info, char *obsram,
 	}
 	if (tls_array != NULL)
 	{
-		// refuse any loader state we did not model
 		size_t	check;
 
 		check = 0;
@@ -923,7 +857,6 @@ bool	prepare_tls(std::string &payload, PEInfo &info, char *obsram,
 			check++;
 		}
 	}
-	// extend the array by one slot; the old block is kept, its heap is unknown
 	new_array = reinterpret_cast<char **>(HeapAlloc(GetProcessHeap(), 0, (used + 1) * sizeof(char *)));
 	if (new_array == NULL)
 	{
@@ -935,7 +868,6 @@ bool	prepare_tls(std::string &payload, PEInfo &info, char *obsram,
 	new_array[used] = thread_data;
 	teb = reinterpret_cast<TEB_MINI *>(__readgsqword(0x30));
 	teb->thread_local_storage_pointer = new_array;
-	// read back: the TEB must now expose our array, anything else is fatal
 	if (teb->thread_local_storage_pointer != new_array
 		|| teb->thread_local_storage_pointer[used] != thread_data)
 	{
@@ -943,7 +875,6 @@ bool	prepare_tls(std::string &payload, PEInfo &info, char *obsram,
 		return (false);
 	}
 	*(uint32_t *)index_va = static_cast<uint32_t>(used);
-	// count the callbacks, they stay pending, none is executed here
 	if (callbacks_va != 0)
 	{
 		while (callbacks < 1024)
@@ -969,8 +900,7 @@ bool	prepare_tls(std::string &payload, PEInfo &info, char *obsram,
 	}
 	return (true);
 }
-// count delay import descriptors: the original resolves them itself at first
-// call through its own delay helper, the stub has nothing to patch here
+// Delay imports are resolved by the original delay-load helper.
 bool	audit_delay_imports(std::string &payload, PEInfo &info, size_t &dlls)
 {
 	size_t	optional_offset;
@@ -986,7 +916,6 @@ bool	audit_delay_imports(std::string &payload, PEInfo &info, size_t &dlls)
 	dlls = 0;
 	optional_offset = static_cast<size_t>(info.dos.e_lfanew) + 24;
 	directory_count = read_uint32_le(payload.data() + optional_offset + 108);
-	// DELAY IMPORT is data directory index 13
 	if (directory_count <= 13)
 		return (true);
 	delay_rva = read_uint32_le(payload.data() + optional_offset + 216);
@@ -1010,10 +939,8 @@ bool	audit_delay_imports(std::string &payload, PEInfo &info, size_t &dlls)
 		descriptor = payload.data() + position;
 		gr_attrs = read_uint32_le(descriptor);
 		name_field = read_uint32_le(descriptor + 4);
-		// null descriptor marks the end of the table
 		if (gr_attrs == 0 && name_field == 0)
 			break ;
-		// grAttrs bit 0 set means the fields are VAs, not RVAs (rare)
 		if ((gr_attrs & 1) == 0)
 		{
 			size_t	name_offset;
@@ -1029,7 +956,7 @@ bool	audit_delay_imports(std::string &payload, PEInfo &info, size_t &dlls)
 		return (false);
 	return (true);
 }
-// validation pass: structural validity and readiness checked separately
+// Validate the restored image before transfer.
 bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 	uint32_t obsram_size, size_t patched_relocs, bool tls_ready, size_t delay_dlls)
 {
@@ -1048,7 +975,6 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 	std::string	readiness;
 
 	structure_ok = true;
-	// the original headers must now be present at the start of .obsram
 	if (obsram[0] != 'M' || obsram[1] != 'Z')
 	{
 		std::cout << "obsidian: validation failed, MZ signature missing in .obsram\n";
@@ -1060,7 +986,6 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 		std::cout << "obsidian: validation failed, PE signature missing in .obsram\n";
 		structure_ok = false;
 	}
-	// the restored headers must be byte-identical to the decompressed file
 	if (info.optional.size_of_headers > payload.size()
 		|| info.optional.size_of_headers > obsram_size
 		|| std::memcmp(payload.data(), obsram, info.optional.size_of_headers) != 0)
@@ -1068,14 +993,12 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 		std::cout << "obsidian: validation failed, restored headers differ from the file\n";
 		structure_ok = false;
 	}
-	// the entry point of the original must be inside the restored image
 	if (static_cast<uint64_t>(info.optional.entry_point_rva) + 16 > info.optional.size_of_image
 		|| static_cast<uint64_t>(info.optional.entry_point_rva) + 16 > obsram_size)
 	{
 		std::cout << "obsidian: validation failed, entry point outside the image\n";
 		structure_ok = false;
 	}
-	// the entry point must belong to an executable section of the original
 	{
 		size_t	index;
 		bool	in_exec_section;
@@ -1091,7 +1014,6 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 			if (section_end < section.raw_size)
 				section_end = section.raw_size;
 			section_end += section.virtual_address;
-			// EXEC characteristic 0x20000000, entry strictly inside the range
 			if (info.optional.entry_point_rva >= section.virtual_address
 				&& static_cast<uint64_t>(info.optional.entry_point_rva) < section_end
 				&& (section.characteristics & 0x20000000U) != 0)
@@ -1108,7 +1030,6 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 		}
 		else
 		{
-			// the page mapped at the entry address must be executable
 			MEMORY_BASIC_INFORMATION	mbi;
 
 			if (VirtualQuery(obsram + info.optional.entry_point_rva, &mbi, sizeof(mbi)) == 0
@@ -1127,13 +1048,11 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 	import_size = read_uint32_le(obsram + optional_offset + 124);
 	pdata_rva = read_uint32_le(obsram + optional_offset + 136);
 	pdata_size = read_uint32_le(obsram + optional_offset + 140);
-	// a relocation table implies at least one patched entry
 	if (reloc_rva != 0 && reloc_size != 0 && patched_relocs == 0)
 	{
 		std::cout << "obsidian: validation failed, relocations present but none patched\n";
 		structure_ok = false;
 	}
-	// walk the IAT in memory: every slot must hold a resolved address
 	resolved_dlls = 0;
 	resolved_funcs = 0;
 	if (import_rva != 0 && import_size != 0)
@@ -1182,7 +1101,6 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 			descriptor_index++;
 		}
 	}
-	// every RUNTIME_FUNCTION must describe a code range inside the image
 	unwind_count = 0;
 	if (pdata_rva != 0 && pdata_size != 0)
 	{
@@ -1223,7 +1141,6 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 		validity = "valid";
 	else
 		validity = "INVALID";
-	// TLS slot must be reachable and match the decompressed file
 	uint32_t	directory_count2 = read_uint32_le(obsram + optional_offset + 108);
 	if (directory_count2 > 9)
 	{
@@ -1257,7 +1174,6 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 				size_t	tls_offset;
 				size_t	tls_available;
 
-				// in file terms the data lives at start_va - obsram
 				if (!rva_to_offset(payload, info, static_cast<uint32_t>(start_va
 					- reinterpret_cast<uint64_t>(obsram)), tls_offset, tls_available)
 					|| tls_available < raw_size
@@ -1270,7 +1186,6 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 			}
 		}
 	}
-	// readiness verdict: separate from structural validity
 	if (GetProcessHeap() == NULL || GetCommandLineA() == NULL)
 		readiness = "not ready: environment incomplete";
 	else if (!tls_ready)
@@ -1289,7 +1204,7 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 		std::cout << "obsidian: " << delay_dlls << " delay import descriptor(s) found\n";
 	return (structure_ok);
 }
-// run the TLS callbacks with DLL_PROCESS_ATTACH on the restored image
+// Call original TLS callbacks before the entry point.
 bool	run_tls_callbacks(PEInfo &info, char *obsram, uint32_t obsram_size)
 {
 	size_t	optional_offset;
@@ -1300,7 +1215,6 @@ bool	run_tls_callbacks(PEInfo &info, char *obsram, uint32_t obsram_size)
 	size_t	index;
 
 	optional_offset = static_cast<size_t>(info.dos.e_lfanew) + 24;
-	// TLS is data directory index 9
 	if (read_uint32_le(obsram + optional_offset + 108) <= 9)
 		return (true);
 	tls_rva = read_uint32_le(obsram + optional_offset + 184);
@@ -1321,7 +1235,6 @@ bool	run_tls_callbacks(PEInfo &info, char *obsram, uint32_t obsram_size)
 		std::cout << "obsidian: TLS callbacks outside the restored image\n";
 		return (false);
 	}
-	// count and validate every callback before running any of them
 	count = 0;
 	while (count < 1024)
 	{
@@ -1340,7 +1253,6 @@ bool	run_tls_callbacks(PEInfo &info, char *obsram, uint32_t obsram_size)
 	}
 	if (count >= 1024)
 		return (false);
-	// run them in order, same as LdrpCallInitRoutines would
 	index = 0;
 	while (index < count)
 	{
@@ -1357,7 +1269,6 @@ bool	run_tls_callbacks(PEInfo &info, char *obsram, uint32_t obsram_size)
 	return (true);
 }
 
-// real transfer: TLS callbacks, then the original entry point
 bool	launch_original(char *obsram, uint32_t obsram_size, PEInfo &info)
 {
 	typedef	int (*entry_fn)(void);
@@ -1366,11 +1277,9 @@ bool	launch_original(char *obsram, uint32_t obsram_size, PEInfo &info)
 
 	if (!run_tls_callbacks(info, obsram, obsram_size))
 		return (false);
-	// flush our own console output before the original takes over
 	std::cout.flush();
 	fn = reinterpret_cast<entry_fn>(get_original_entry_point(obsram, obsram_size, info));
 	return_code = fn();
-	// reached only when the original CRT returns instead of exiting
 	ExitProcess(static_cast<UINT>(return_code));
 }
 int	main(void)
@@ -1391,7 +1300,6 @@ int	main(void)
 	size_t	delay_dlls;
 	bool	tls_ready;
 
-	// find ourselves, read footer, read payload, then we can close the file
 	self_file = open_self(self_size);
 	if (self_file == INVALID_HANDLE_VALUE)
 		return (1);
@@ -1407,44 +1315,43 @@ int	main(void)
 	}
 	if (!CloseHandle(self_file))
 		return (1);
-	// decompress the original file into RAM
 	if (!compression::decompress(compressed, original_size, payload))
 		return (1);
-	// recover every PE structure from the restored bytes
+
 	if (!fill_pe_info(payload, info))
 		return (1);
-	// find the restore area Windows already loaded for us
+
 	if (!find_obsram(obsram, obsram_size))
 		return (1);
-	// rebuild the original image inside .obsram, nothing is executed yet
+
 	if (!restore_sections(payload, info, obsram, obsram_size))
 		return (1);
-	// fix absolute addresses for the real location of .obsram
+
 	if (!patch_relocations(payload, info, obsram, obsram_size, patched_relocs))
 		return (1);
-	// load every imported DLL and fill the original IAT
+
 	if (!resolve_imports(payload, info, obsram, obsram_size, resolved_dlls, resolved_funcs))
 		return (1);
-	// register the x64 exception table, no code of the original runs here
+
 	if (!register_exceptions(payload, info, obsram, obsram_size))
 		return (1);
-	// audit only: TLS callbacks are counted, never called
+
 	if (!audit_tls(payload, info, tls_callbacks))
 		return (1);
-	// delay imports: parsed and counted, the original resolves them itself
+
 	if (!audit_delay_imports(payload, info, delay_dlls))
 		return (1);
-	// allocate the original TLS slot from loader-written facts, no callback
+
 	if (!prepare_tls(payload, info, obsram, obsram_size, tls_callbacks, tls_ready))
 		return (1);
-	// final protections, must stay after every patching step
+
 	if (!protect_sections(payload, info, obsram, obsram_size))
 		return (1);
-	// validation pass over the restored image, nothing is executed
+
 	if (!validate_restored_image(payload, info, obsram, obsram_size,
 		patched_relocs, tls_ready, delay_dlls))
 		return (1);
-	// real transfer: TLS callbacks then the restored entry point
+
 	if (!launch_original(obsram, obsram_size, info))
 		return (1);
 	return (0);

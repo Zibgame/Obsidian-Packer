@@ -1,4 +1,3 @@
-/* hello: minimal payload, exit code 42 to check propagation */
 #include <stdio.h>
 
 int	main(void)

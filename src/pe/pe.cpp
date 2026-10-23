@@ -85,19 +85,16 @@ static void	write_uint32_le(char *data, uint32_t value)
 	}
 }
 
-// fill optional from the optional header, false if it does not fit in the file
 static bool	fill_optional_info(std::string &payload, PEInfo &info)
 {
 	size_t	optional_offset;
 
 	optional_offset = static_cast<size_t>(info.dos.e_lfanew) + 24;
-	// PE32+ fixed part is 112 bytes, data directories may extend the declared size
 	if (info.coff.size_of_optional_header < 112 || optional_offset > payload.size() || info.coff.size_of_optional_header > payload.size() - optional_offset)
 	{
 		std::cout << "obsidian: not a PE32+ x86-64 file (optional header out of bounds or too small)\n";
 		return (false);
 	}
-	// offsets are fixed once Magic is known: 0x20B means PE32+ layout
 	info.optional.entry_point_rva = read_uint32_le(payload.data() + optional_offset + 16);
 	info.optional.image_base = read_uint64_le(payload.data() + optional_offset + 24);
 	info.optional.section_alignment = read_uint32_le(payload.data() + optional_offset + 32);
@@ -106,7 +103,6 @@ static bool	fill_optional_info(std::string &payload, PEInfo &info)
 	return (true);
 }
 
-// fill sections from the table located after the optional header, false if it does not fit in the file
 static bool	fill_sections(std::string &payload, PEInfo &info)
 {
 	SectionInfo	section;
@@ -117,7 +113,6 @@ static bool	fill_sections(std::string &payload, PEInfo &info)
 
 	info.sections.clear();
 	table_offset = static_cast<size_t>(info.dos.e_lfanew) + 24 + info.coff.size_of_optional_header;
-	// each section header is 40 bytes, the whole table must stay inside the file
 	if (table_offset > payload.size() || info.coff.number_of_sections == 0 || info.coff.number_of_sections > (payload.size() - table_offset) / 40)
 	{
 		std::cout << "obsidian: not a PE32+ x86-64 file (section table out of bounds)\n";
@@ -127,7 +122,6 @@ static bool	fill_sections(std::string &payload, PEInfo &info)
 	while (index < info.coff.number_of_sections)
 	{
 		data = payload.data() + table_offset + index * 40;
-		// section names are 8 bytes, force a terminator in our 9-byte copy
 		name_index = 0;
 		while (name_index < 8)
 		{
@@ -140,7 +134,6 @@ static bool	fill_sections(std::string &payload, PEInfo &info)
 		section.raw_size = read_uint32_le(data + 16);
 		section.raw_offset = read_uint32_le(data + 20);
 		section.characteristics = read_uint32_le(data + 36);
-		// raw content must stay inside the file when the section owns bytes on disk
 		if (section.raw_size != 0 && (section.raw_offset > payload.size() || section.raw_size > payload.size() - section.raw_offset))
 		{
 			std::cout << "obsidian: not a PE32+ x86-64 file (section data out of bounds)\n";
@@ -152,7 +145,6 @@ static bool	fill_sections(std::string &payload, PEInfo &info)
 	return (true);
 }
 
-// fill info with the parsed PE structures, false if not a valid PE32+ x86-64
 bool	fill_pe_info(std::string &payload, PEInfo &info)
 {
 	if (payload.size() < 64)
@@ -168,10 +160,8 @@ bool	fill_pe_info(std::string &payload, PEInfo &info)
 		std::cout << "obsidian: not a PE32+ x86-64 file (MZ signature missing)\n";
 		return (false);
 	}
-	// PE header offset, at fixed DOS offset 0x3C
 	info.dos.e_lfanew = read_uint32_le(payload.data() + 0x3C);
 
-	// 26 = PE signature (4) + COFF header (20) + Magic (2), the farthest field we read
 	if (info.dos.e_lfanew < 0x40 || info.dos.e_lfanew > payload.size() - 26)
 	{
 		std::cout << "obsidian: not a PE32+ x86-64 file (e_lfanew out of bounds: 0x" << std::hex << info.dos.e_lfanew << ")\n";
@@ -210,7 +200,7 @@ bool	fill_pe_info(std::string &payload, PEInfo &info)
 	return (true);
 }
 
-// Convert a file RVA and report how many contiguous raw bytes remain.
+// Return a file offset and the remaining bytes in the same section.
 bool rva_to_offset(std::string &payload, PEInfo &info, uint32_t rva, size_t &offset, size_t &available)
 {
     if (rva < info.optional.size_of_headers)
@@ -601,7 +591,7 @@ bool add_restore_section(std::string &stub, uint32_t original_image_size, uint32
     if (directory_count > (static_cast<uint32_t>(info.coff.size_of_optional_header) - 112U) / 8U)
         return (false);
 
-    // Refuse a signed stub: changing its headers invalidates its signature.
+    // Header changes invalidate an Authenticode signature.
     if (directory_count > 4)
     {
         if (read_uint32_le(stub.data() + optional_offset + 144) != 0
@@ -633,7 +623,6 @@ bool add_restore_section(std::string &stub, uint32_t original_image_size, uint32
         i++;
     }
 
-    // A new section header requires 40 unused bytes.
     if (new_header_offset + 40 > first_raw_offset)
         return (false);
 
@@ -662,14 +651,11 @@ bool add_restore_section(std::string &stub, uint32_t original_image_size, uint32
 
     std::copy_n(".obsram", 7, section_header.data());
 
-    // IMAGE_SECTION_HEADER
     write_uint32_le(section_header.data() + 8, original_image_size);
     write_uint32_le(section_header.data() + 12, static_cast<uint32_t>(start));
 
-    // Read/write, uninitialized data, not executable.
     write_uint32_le(section_header.data() + 36, 0xC0000080U);
 
-    // All validations succeeded: modify the PE headers.
     std::copy(section_header.begin(), section_header.end(), stub.begin() + new_header_offset);
 
     write_uint16_le(stub.data() + info.dos.e_lfanew + 6, info.coff.number_of_sections + 1);
