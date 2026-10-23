@@ -13,6 +13,7 @@ extracted.bin
 
 # Generated tooling files
 compile_commands.json
+AGENTS.md
 
 # Editors and IDEs
 .vscode/

@@ -1,287 +1,286 @@
 <p align="center">
-  <img src="assets/branding/obsidian-readme-banner.png" alt="OBSIDIAN — x86-64 PE packer" width="100%">
+  <img src="assets/branding/obsidian-readme-banner.png" alt="OBSIDIAN" width="100%">
 </p>
 
 <p align="center">
-  <strong>A Windows x86-64 PE packer built for offensive research, loader development and detection testing.</strong>
+  <strong>OFFENSIVE PE PACKING RESEARCH FOR WINDOWS x86-64</strong>
 </p>
 
 <p align="center">
-  Compress. Restore. Relocate. Resolve. Execute.
+  <a href="#build"><img src="https://img.shields.io/badge/BUILD-C++17-C4C9D0?style=for-the-badge&labelColor=050607" alt="C++17"></a>
+  <a href="#requirements"><img src="https://img.shields.io/badge/TARGET-WINDOWS_x64-C4C9D0?style=for-the-badge&labelColor=050607" alt="Windows x64"></a>
+  <a href="https://github.com/Zibgame/Obsidian-Packer/releases"><img src="https://img.shields.io/github/v/release/Zibgame/Obsidian-Packer?include_prereleases&style=for-the-badge&labelColor=050607&color=7C2CFF" alt="Latest release"></a>
+  <a href="#current-state"><img src="https://img.shields.io/badge/STATUS-RESEARCH_BUILD-7C2CFF?style=for-the-badge&labelColor=050607" alt="Research build"></a>
+  <a href="#license"><img src="https://img.shields.io/badge/LICENSE-NOT_SELECTED-555B66?style=for-the-badge&labelColor=050607" alt="No license"></a>
+</p>
+
+<p align="center">
+  <code>COMPRESS</code> · <code>RESTORE</code> · <code>RELOCATE</code> · <code>RESOLVE</code> · <code>EXECUTE</code>
 </p>
 
 ---
 
-# OBSIDIAN
+OBSIDIAN is an open-source **PE32+ packer and in-memory loader**. It takes a Windows x86-64 executable, compresses it into a custom runtime stub, rebuilds the original image in memory and transfers execution to its real entry point.
 
-OBSIDIAN is an open-source PE32+ packer for Windows.
+It exists for offensive-security research: custom loader development, packer fingerprinting, static-signature mutation and controlled antivirus testing. The goal is not disguised as compression, software protection or optimization.
 
-It takes a 64-bit executable, compresses it, embeds it inside a runtime stub and rebuilds the original image in memory when the packed file starts. The stub applies relocations, resolves imports, restores TLS state, fixes memory protections and transfers control to the original entry point.
+> **This project studies anti-detection. That is the point.**<br>
+> It does not promise FUD, permanent invisibility or a universal antivirus bypass. Those claims are bullshit. Detection is measurable, temporary and adversarial.
 
-This is not a file compressor wearing a security-themed logo. It is an offensive tooling project built to study executable packing, custom loaders, static signatures and antivirus behavior.
+> [!CAUTION]
+> OBSIDIAN implements techniques also used by malware loaders. Use it only on binaries and systems you own or are explicitly authorized to test. Offensive capability is not authorization.
 
-```text
-INPUT.EXE  ──►  PACK  ──►  OUTPUT.EXE  ──►  RESTORE IN MEMORY  ──►  EXECUTE
-```
-
-> [!WARNING]
-> OBSIDIAN manipulates executable files and implements behavior commonly found in malware loaders. Use it only on binaries and systems you own or are explicitly allowed to test. The project is intended for controlled research, reverse engineering and defensive validation.
-
-## Current state
-
-OBSIDIAN is a working execution prototype. It can pack the project test binaries and run the restored program from the `.obsram` section of the generated executable.
-
-Implemented today:
-
-- strict PE32+ / AMD64 input checks;
-- XPRESS_HUFF payload compression through the Windows Compression API;
-- automatic creation of an uninitialized `.obsram` section in the stub;
-- in-memory reconstruction of PE headers and sections;
-- `IMAGE_REL_BASED_DIR64` relocation handling;
-- import resolution by name and ordinal;
-- x64 exception table registration with `RtlAddFunctionTable`;
-- main-thread static TLS allocation;
-- TLS callback execution with `DLL_PROCESS_ATTACH`;
-- page protections rebuilt from the original section flags;
-- entry-point validation and execution;
-- original exit-code propagation;
-- command-line argument forwarding through the current process environment.
-
-This is still research code, not a universal packer. It has been validated against the binaries included in this repository. Compatibility with arbitrary third-party executables is not claimed.
-
-## How it works
-
-### Packing stage
-
-The `obsidian` executable:
-
-1. reads and validates the input as PE32+ x86-64;
-2. compresses the complete input file with XPRESS_HUFF;
-3. reads the runtime stub;
-4. adds a `.obsram` section large enough for the original image;
-5. writes the modified stub to `output.exe`;
-6. appends the compressed payload and a 20-byte footer.
-
-The packed file ends with:
+## What it does
 
 ```text
-┌───────────────────────────────┐
-│ Modified runtime stub         │
-├───────────────────────────────┤
-│ Compressed original PE        │
-├────────┬───────────┬──────────┤
-│ "OBSD" │ packed u64│ raw u64  │
-└────────┴───────────┴──────────┘
+                         ┌────────────────────┐
+                         │   obsidian-stub    │
+                         └─────────┬──────────┘
+                                   │ inject .obsram
+                                   ▼
+┌──────────────┐   validate   ┌──────────────┐   append payload   ┌──────────────┐
+│  payload.exe │ ───────────► │   obsidian   │ ────────────────► │  output.exe  │
+└──────────────┘   compress   └──────────────┘                    └──────┬───────┘
+                                                                        │ run
+                                                                        ▼
+                                                              restore PE in memory
+                                                              resolve + relocate
+                                                              execute entry point
 ```
 
-Both sizes are stored as unsigned 64-bit little-endian values.
+| Packing | Runtime |
+| --- | --- |
+| Validates PE32+ / AMD64 input | Reads its own embedded payload |
+| Compresses with XPRESS_HUFF | Rebuilds headers and sections in `.obsram` |
+| Adds the `.obsram` memory area | Applies `DIR64` relocations |
+| Appends payload and `OBSD` footer | Resolves imports by name or ordinal |
+| Produces a standalone `output.exe` | Restores TLS, permissions and execution |
 
-### Runtime stage
+The original executable is restored directly in memory. No temporary copy of the unpacked PE is written to disk.
 
-When `output.exe` starts, the stub:
-
-1. opens its own file and reads the footer;
-2. extracts and decompresses the embedded PE;
-3. locates `.obsram` inside its loaded image;
-4. copies the original headers and sections into memory layout;
-5. applies base relocations for the real `.obsram` address;
-6. loads imported DLLs and rebuilds the IAT;
-7. registers the original x64 unwind table;
-8. prepares static TLS for the main thread;
-9. applies final page permissions;
-10. validates the restored image;
-11. executes TLS callbacks;
-12. calls the original entry point.
-
-No temporary copy of the original executable is written to disk during this process.
-
-## Build
+## Quick start
 
 ### Requirements
 
-- Windows x86-64;
-- a C++17 compiler, tested with MinGW-w64 `g++`;
-- GNU Make;
-- the Windows Compression API;
-- the Cabinet import library (`-lcabinet`).
+- Windows x86-64
+- MinGW-w64 with C++17 support
+- GNU Make
+- Windows Compression API
+- Cabinet import library (`-lcabinet`)
 
-Build both the packer and its runtime stub:
-
-```console
-mingw32-make
-```
-
-Or use every detected logical processor:
+### Build
 
 ```console
 mingw32-make parallel
+mingw32-make examples
 ```
 
-Generated files:
+This creates:
 
 ```text
 obsidian.exe
 obsidian-stub.exe
+examples/hello.exe
+examples/args_echo.exe
+examples/tls_demo.exe
 ```
 
-Remove generated artifacts with:
-
-```console
-mingw32-make clean
-```
-
-## Usage
-
-With `obsidian-stub.exe` next to the packer:
-
-```console
-obsidian.exe payload.exe
-```
-
-With an explicit stub path:
-
-```console
-obsidian.exe path\to\obsidian-stub.exe payload.exe
-```
-
-The packed executable is written to `output.exe`. Run it normally:
-
-```console
-.\output.exe
-```
-
-Arguments passed to `output.exe` remain visible to the restored program:
-
-```console
-.\output.exe first second third
-```
-
-## Test payloads
-
-Three small payloads are included:
-
-| Payload | Purpose |
-| --- | --- |
-| `hello.exe` | Checks execution and exit-code propagation |
-| `args_echo.exe` | Checks command-line arguments |
-| `tls_demo.exe` | Checks static TLS and TLS callbacks |
-
-Build them with:
-
-```console
-mingw32-make examples
-```
-
-Example:
+### Pack
 
 ```console
 .\obsidian.exe .\examples\hello.exe
+```
+
+The default stub is detected automatically and the packed binary is written to `output.exe`.
+
+Use a custom stub explicitly when needed:
+
+```console
+.\obsidian.exe .\path\to\obsidian-stub.exe .\payload.exe
+```
+
+### Execute
+
+```console
 .\output.exe
 echo %ERRORLEVEL%
 ```
 
-The expected exit code is `42`.
+The `hello.exe` fixture prints its message and returns exit code `42`.
 
-## Project layout
+Arguments are passed through the current process environment:
+
+```console
+.\obsidian.exe .\examples\args_echo.exe
+.\output.exe alpha beta gamma
+```
+
+## Current state
+
+OBSIDIAN is a **working execution prototype**, not a finished universal packer.
+
+| Capability | State |
+| --- | :---: |
+| PE32+ / AMD64 validation | **Working** |
+| XPRESS_HUFF compression | **Working** |
+| Runtime `.obsram` injection | **Working** |
+| In-memory PE reconstruction | **Working** |
+| `IMAGE_REL_BASED_DIR64` relocations | **Working** |
+| Import resolution | **Working** |
+| x64 exception table registration | **Working** |
+| Main-thread static TLS | **Working** |
+| TLS callbacks | **Working** |
+| Section memory protections | **Working** |
+| Original entry-point transfer | **Working** |
+| Argument and exit-code propagation | **Working** |
+| Resource registration | **Not supported** |
+| Full TLS behavior for new threads | **Not supported** |
+| Mutation engine | **Planned** |
+| Detection benchmarking | **Planned** |
+
+End-to-end execution has been validated on the fixtures shipped with this repository. Compatibility with arbitrary third-party software is not claimed.
+
+## Runtime internals
+
+<details>
+<summary><strong>Open the loader pipeline</strong></summary>
+
+When `output.exe` starts, the stub:
+
+1. opens its own executable and reads the final 20-byte footer;
+2. extracts and decompresses the embedded original PE;
+3. locates the reserved `.obsram` section;
+4. copies PE headers and sections into memory layout;
+5. applies base relocations for the real `.obsram` address;
+6. loads imported DLLs and patches the original IAT;
+7. registers `.pdata` through `RtlAddFunctionTable`;
+8. allocates static TLS for the main thread;
+9. rebuilds page protections from section characteristics;
+10. validates the restored image and entry point;
+11. calls TLS callbacks with `DLL_PROCESS_ATTACH`;
+12. transfers execution to the original entry point.
+
+The packed file layout is deliberately small:
+
+```text
+┌──────────────────────────────────────────┐
+│ Modified PE runtime stub                 │
+│ └── .obsram: restored image memory       │
+├──────────────────────────────────────────┤
+│ XPRESS_HUFF compressed original PE       │
+├────────┬────────────────┬────────────────┤
+│ OBSD   │ packed size    │ original size  │
+│ 4 B    │ uint64 LE      │ uint64 LE      │
+└────────┴────────────────┴────────────────┘
+```
+
+</details>
+
+<details>
+<summary><strong>Open the source layout</strong></summary>
 
 ```text
 Obsidian-Packer/
-├── assets/branding/       Visual identity
+├── assets/branding/       Brand assets
 ├── docs/                  Runtime notes
-├── examples/              Small PE test payloads
+├── examples/              PE test fixtures
 ├── include/
 │   ├── compression/       Compression interface
 │   ├── file/              Binary file helpers
-│   └── pe/                PE structures and parser interface
+│   └── pe/                PE parser interface
 ├── src/
 │   ├── compression/       XPRESS_HUFF implementation
-│   ├── file/              Binary I/O implementation
+│   ├── file/              Binary I/O
 │   ├── pe/                PE parsing and section injection
 │   ├── stub/              In-memory runtime loader
 │   └── main.cpp           Packer entry point
 └── Makefile
 ```
 
-## Known limits
+</details>
 
-OBSIDIAN deliberately rejects states it does not know how to restore safely.
+## Offensive research direction
 
-- PE32 and non-AMD64 binaries are not supported.
-- Bound imports are rejected.
-- A binary without relocations can only run if `.obsram` matches its preferred image base.
-- Static TLS is prepared for the initial thread only.
-- TLS callbacks are not automatically dispatched for threads created later.
-- PE resources are not registered as resources of the host image.
-- Authenticode signatures are not preserved.
-- The output has no encryption, polymorphism or mutation engine yet.
-- The current footer and section name are stable signatures.
-- Only the project fixtures have been tested end to end.
+Public packers become signatures of their own. Fixed section names, repeated metadata, known decompression loops, stable stubs and predictable file layouts give defenders something reliable to match.
 
-These limits are not hidden behind marketing language. If a feature is not implemented, OBSIDIAN should fail instead of pretending the output is valid.
+OBSIDIAN is being built to attack that stability.
 
-## Offensive research goals
-
-The long-term objective is to measure how loader design and binary mutation change the observable surface of a packed executable.
-
-Planned work includes:
-
-- configurable payload encoding and compression;
-- randomized section names and metadata;
-- multiple runtime restoration strategies;
-- deterministic builds for debugging;
-- randomized builds for signature experiments;
-- structural diffing between original and packed files;
-- entropy, hash and section-layout reports;
-- isolated execution checks;
-- batch generation of packing variants;
-- antivirus detection history and comparison;
-- reduction of stable packer-specific fingerprints.
-
-The intended research loop is:
+The research objective is to generate controlled packing variants, execute them in an isolated environment and measure which transformations materially change static or heuristic detection.
 
 ```text
-inspect → pack → validate → execute → analyze → mutate → compare
+INSPECT  ─►  PACK  ─►  VALIDATE  ─►  EXECUTE  ─►  ANALYZE  ─►  MUTATE  ─►  COMPARE
 ```
 
-Packing does not make a payload invisible. A known stub, a fixed footer, a repeated section layout or suspicious runtime behavior can be enough to identify it. OBSIDIAN exists to make those artifacts visible, measurable and replaceable.
+Planned offensive research work:
+
+- randomized section names, metadata and layout;
+- interchangeable compression and encoding strategies;
+- multiple runtime restoration paths;
+- deterministic builds for debugging;
+- randomized builds for mutation experiments;
+- structural, entropy and hash comparison;
+- batch generation of packing variants;
+- isolated execution validation;
+- antivirus and EDR result history;
+- measurement of stable packer-specific fingerprints.
+
+The target is not a magic “undetected” button. The target is a loader whose observable artifacts can be changed, tested and compared instead of blindly trusted.
+
+## Hard limits
+
+OBSIDIAN rejects states it cannot restore safely.
+
+- PE32 and non-AMD64 binaries are rejected.
+- Bound imports are rejected.
+- A PE without relocations requires its preferred image base.
+- Static TLS is prepared only for the initial thread.
+- TLS callbacks are not dispatched automatically for later threads.
+- Original PE resources are not registered with the host image.
+- Authenticode signatures are invalidated by packing.
+- Encryption and polymorphism are not implemented.
+- `.obsram`, `OBSD` and the current stub are stable detection surfaces.
+- Only repository fixtures have been validated end to end.
+
+These are engineering limits, not fine print. If OBSIDIAN cannot prove that the restored image is safe to launch, it should fail hard.
 
 ## Roadmap
 
-- [x] PE32+ validation
-- [x] Payload compression
+- [x] Strict PE32+ validation
+- [x] Compression and embedded payload format
 - [x] Runtime section injection
-- [x] In-memory image reconstruction
-- [x] DIR64 relocations
-- [x] Import resolution
-- [x] x64 exception registration
-- [x] Main-thread TLS restoration
-- [x] TLS callback execution
-- [x] Original entry-point transfer
-- [x] Argument and exit-code tests
+- [x] Memory-layout reconstruction
+- [x] Relocations, imports and unwind registration
+- [x] Main-thread TLS and callbacks
+- [x] Final memory protections
+- [x] Entry-point transfer
+- [x] Argument and exit-code fixtures
 - [ ] Resource support
-- [ ] Full multi-thread TLS behavior
-- [ ] Deterministic test suite
+- [ ] TLS support for later threads
+- [ ] Deterministic automated fixtures
 - [ ] Mutation engine
 - [ ] Structural analysis reports
 - [ ] Isolated execution harness
-- [ ] Detection benchmarking
+- [ ] Detection benchmarking and history
 - [ ] Stable command-line interface
 
-## Research ethics
+## Responsible use
 
-The code is offensive by nature. That does not remove the need for authorization.
+The code is offensive by design. Do not water that down, and do not confuse it with permission.
 
-Good uses include:
+Legitimate uses include packer research, reverse engineering, detection engineering, EDR validation, malware-analysis training and authorized red-team laboratories. Deploying packed code against systems, users or organizations without explicit authorization is outside the scope of this project.
 
-- studying PE loading internals;
-- testing EDR and antivirus visibility in a lab;
-- building unpacking and detection rules;
-- comparing static and behavioral indicators;
-- reverse-engineering packer techniques;
-- validating defensive controls on owned systems.
-
-Do not deploy packed code against people, infrastructure or organizations without explicit permission. You are responsible for the binaries you pack, the systems you execute them on and the laws that apply to your work.
+You are responsible for the payloads you pack, the machines you execute them on and the laws that apply to your work.
 
 ## License
 
-No license has been selected yet. Until a license file is added, this repository does not grant permission to copy, modify or redistribute the code.
+No license has been selected. Until a license file is added, this repository does not grant permission to copy, modify or redistribute the code.
+
+---
+
+<p align="center">
+  <img src="assets/branding/obsidian-emblem.png" alt="OBSIDIAN emblem" width="96">
+</p>
+
+<p align="center">
+  <strong>BLACK GLASS. VIOLET FRACTURE. NO FALSE PROMISES.</strong>
+</p>
