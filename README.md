@@ -79,7 +79,7 @@ GNU Make's native parallel syntax is also supported:
 make -j
 ```
 
-The executable is written to `build/bin/obsidian` on Unix-like systems and `build/bin/obsidian.exe` on Windows. Use `make clean` to remove every generated build artifact.
+The build produces the main `obsidian` executable and the separate `obsidian-stub` runtime executable in `build/bin/`. Windows builds use the `.exe` extension. Use `make clean` to remove every generated build artifact.
 
 ## Research scope
 

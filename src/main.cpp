@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   main.cpp                                           :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: zcadinot <zcadinot@student.42.fr>          +#+  +:+       +#+        */
+/*   By: marvin <marvin@student.42.fr>              +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/10/23 01:53:54 by zcadinot          #+#    #+#             */
-/*   Updated: 2026/10/23 01:53:59 by zcadinot         ###   ########.fr       */
+/*   Updated: 2026/10/23 01:57:57 by marvin           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -14,5 +14,6 @@
 
 int main(void)
 {
+	printf("Programme is Running ...");
 	return (0);
 }
