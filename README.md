@@ -15,12 +15,12 @@
 </p>
 
 <p align="center">
-  <code>COMPRESS</code> · <code>RESTORE</code> · <code>RELOCATE</code> · <code>RESOLVE</code> · <code>EXECUTE</code>
+  <code>COMPRESS</code> · <code>ENCRYPT</code> · <code>RESTORE</code> · <code>RELOCATE</code> · <code>EXECUTE</code>
 </p>
 
 ---
 
-OBSIDIAN is an open-source **PE32+ packer and in-memory loader**. It takes a Windows x86-64 executable, compresses it into a custom runtime stub, rebuilds the original image in memory and transfers execution to its real entry point.
+OBSIDIAN is an open-source **PE32+ packer and in-memory loader**. It takes a Windows x86-64 executable, compresses and encrypts it inside a custom runtime stub, rebuilds the original image in memory and transfers execution to its real entry point.
 
 It exists for offensive-security research: custom loader development, packer fingerprinting, static-signature mutation and controlled antivirus testing. The goal is not disguised as compression, software protection or optimization.
 
@@ -40,7 +40,8 @@ It exists for offensive-security research: custom loader development, packer fin
                                    ▼
 ┌──────────────┐   validate   ┌──────────────┐   append payload   ┌──────────────┐
 │  payload.exe │ ───────────► │   obsidian   │ ────────────────► │  output.exe  │
-└──────────────┘   compress   └──────────────┘                    └──────┬───────┘
+└──────────────┘ compress +   └──────────────┘                    └──────┬───────┘
+                   encrypt
                                                                         │ run
                                                                         ▼
                                                               restore PE in memory
@@ -51,9 +52,9 @@ It exists for offensive-security research: custom loader development, packer fin
 | Packing | Runtime |
 | --- | --- |
 | Validates PE32+ / AMD64 input | Reads its own embedded payload |
-| Compresses with XPRESS_HUFF | Rebuilds headers and sections in `.obsram` |
-| Adds the `.obsram` memory area | Applies `DIR64` relocations |
-| Appends payload and `OBSD` footer | Resolves imports by name or ordinal |
+| Compresses with LZMA and encrypts with ChaCha20 | Decrypts and decompresses the original PE |
+| Copies the payload's PE resources into the stub | Restores into `.obsram` or a stomp region |
+| Injects a per-build key and appends a versioned `OBSD` footer | Applies `DIR64` relocations and resolves imports |
 | Produces a standalone `output.exe` | Restores TLS, permissions and execution |
 
 The original executable is restored directly in memory. No temporary copy of the unpacked PE is written to disk.
@@ -65,8 +66,7 @@ The original executable is restored directly in memory. No temporary copy of the
 - Windows x86-64
 - MinGW-w64 with C++17 support
 - GNU Make
-- Windows Compression API
-- Cabinet import library (`-lcabinet`)
+- MinGW import library for Windows CNG (`-lbcrypt`)
 
 ### Build
 
@@ -99,6 +99,14 @@ Use a custom stub explicitly when needed:
 .\obsidian.exe .\path\to\obsidian-stub.exe .\payload.exe
 ```
 
+Select the packing backends and restore strategy from the command line:
+
+```console
+.\obsidian.exe --compression lzma --encryption chacha20 --restore stomp .\payload.exe
+```
+
+The available values are currently `lzma`, `chacha20`, and the `obsram` or `stomp` restore modes. `obsram` is the default. `stomp` is experimental: it attempts to restore the image into a suitable loaded system module and falls back to `.obsram` when no candidate is available. Run `.\obsidian.exe --help` for the complete syntax.
+
 ### Execute
 
 ```console
@@ -122,8 +130,11 @@ OBSIDIAN is a **working execution prototype**, not a finished universal packer.
 | Capability | State |
 | --- | :---: |
 | PE32+ / AMD64 validation | **Working** |
-| XPRESS_HUFF compression | **Working** |
+| LZMA compression | **Working** |
+| ChaCha20 payload encryption | **Working** |
+| Pluggable compression and encryption registries | **Working** |
 | Runtime `.obsram` injection | **Working** |
+| Module-stomp restore mode with fallback | **Experimental** |
 | In-memory PE reconstruction | **Working** |
 | `IMAGE_REL_BASED_DIR64` relocations | **Working** |
 | Import resolution | **Working** |
@@ -133,7 +144,7 @@ OBSIDIAN is a **working execution prototype**, not a finished universal packer.
 | Section memory protections | **Working** |
 | Original entry-point transfer | **Working** |
 | Argument and exit-code propagation | **Working** |
-| Resource registration | **Not supported** |
+| Payload resource transfer | **Working** |
 | Full TLS behavior for new threads | **Not supported** |
 | Mutation engine | **Planned** |
 | Detection benchmarking | **Planned** |
@@ -147,18 +158,19 @@ End-to-end execution has been validated on the fixtures shipped with this reposi
 
 When `output.exe` starts, the stub:
 
-1. opens its own executable and reads the final 20-byte footer;
-2. extracts and decompresses the embedded original PE;
-3. locates the reserved `.obsram` section;
-4. copies PE headers and sections into memory layout;
-5. applies base relocations for the real `.obsram` address;
-6. loads imported DLLs and patches the original IAT;
-7. registers `.pdata` through `RtlAddFunctionTable`;
-8. allocates static TLS for the main thread;
-9. rebuilds page protections from section characteristics;
-10. validates the restored image and entry point;
-11. calls TLS callbacks with `DLL_PROCESS_ATTACH`;
-12. transfers execution to the original entry point.
+1. opens its own executable and reads the final 40-byte, versioned footer;
+2. extracts the stored payload and selects its encryption and compression backends;
+3. unmasks the embedded per-build key, decrypts with ChaCha20 and decompresses with LZMA;
+4. selects the reserved `.obsram` section or a compatible module-stomp region;
+5. copies PE headers and sections into memory layout;
+6. applies base relocations for the selected restore address;
+7. loads imported DLLs and patches the original IAT;
+8. registers `.pdata` through `RtlAddFunctionTable`;
+9. allocates static TLS for the main thread;
+10. rebuilds page protections from section characteristics;
+11. validates the restored image and entry point;
+12. calls TLS callbacks with `DLL_PROCESS_ATTACH`;
+13. transfers execution to the original entry point.
 
 The packed file layout is deliberately small:
 
@@ -167,11 +179,13 @@ The packed file layout is deliberately small:
 │ Modified PE runtime stub                 │
 │ └── .obsram: restored image memory       │
 ├──────────────────────────────────────────┤
-│ XPRESS_HUFF compressed original PE       │
-├────────┬────────────────┬────────────────┤
-│ OBSD   │ packed size    │ original size  │
-│ 4 B    │ uint64 LE      │ uint64 LE      │
-└────────┴────────────────┴────────────────┘
+│ LZMA-compressed, ChaCha20-encrypted PE    │
+├────────┬─────────┬──────────┬─────────────┤
+│ OBSD   │ version │ backends │ nonce       │
+│ 4 B    │ 1 B     │ 2 B      │ up to 12 B  │
+├────────┴─────────┴──────────┴──────┬──────┤
+│ stored/original sizes (2 × uint64) │ mode │
+└────────────────────────────────────┴──────┘
 ```
 
 </details>
@@ -186,13 +200,22 @@ Obsidian-Packer/
 ├── examples/              PE test fixtures
 ├── include/
 │   ├── compression/       Compression interface
+│   ├── cli/               Command-line options
+│   ├── crypto/            Encryption interface
 │   ├── file/              Binary file helpers
+│   ├── loader/            Restore-mode registry
+│   ├── packer/            Packer helpers
 │   └── pe/                PE parser interface
 ├── src/
-│   ├── compression/       XPRESS_HUFF implementation
+│   ├── cli/               Command-line parser
+│   ├── compression/       LZMA backend and registry
+│   ├── crypto/            ChaCha20 backend and registry
 │   ├── file/              Binary I/O
+│   ├── loader/            Restore-mode registry
+│   ├── packer/            Random generation and resource transfer
 │   ├── pe/                PE parsing and section injection
 │   ├── stub/              In-memory runtime loader
+│   ├── third_party/lzma/   Vendored public-domain LZMA SDK
 │   └── main.cpp           Packer entry point
 └── Makefile
 ```
@@ -235,10 +258,11 @@ OBSIDIAN rejects states it cannot restore safely.
 - A PE without relocations requires its preferred image base.
 - Static TLS is prepared only for the initial thread.
 - TLS callbacks are not dispatched automatically for later threads.
-- Original PE resources are not registered with the host image.
+- Resource transfer is best effort; malformed or unsupported resource trees leave the stub resources unchanged.
+- The `stomp` restore mode is experimental and is not compatible with every payload or host module.
 - Authenticode signatures are invalidated by packing.
-- Encryption and polymorphism are not implemented.
-- `.obsram`, `OBSD` and the current stub are stable detection surfaces.
+- Encryption is implemented, but it does not provide authenticity or tamper detection.
+- `.obsram`, `OBSD`, the key slot and the current stub remain stable detection surfaces.
 - Only repository fixtures have been validated end to end.
 
 These are engineering limits, not fine print. If OBSIDIAN cannot prove that the restored image is safe to launch, it should fail hard.
@@ -247,15 +271,19 @@ These are engineering limits, not fine print. If OBSIDIAN cannot prove that the 
 
 - [x] Strict PE32+ validation
 - [x] Compression and embedded payload format
+- [x] ChaCha20 payload encryption and per-build key generation
+- [x] Configurable CLI and backend registries
 - [x] Runtime section injection
+- [x] Experimental module-stomp restore mode
+- [x] Payload resource transfer
 - [x] Memory-layout reconstruction
 - [x] Relocations, imports and unwind registration
 - [x] Main-thread TLS and callbacks
 - [x] Final memory protections
 - [x] Entry-point transfer
 - [x] Argument and exit-code fixtures
-- [ ] Resource support
 - [ ] TLS support for later threads
+- [ ] Harden module-stomp compatibility
 - [ ] Deterministic automated fixtures
 - [ ] Mutation engine
 - [ ] Structural analysis reports

