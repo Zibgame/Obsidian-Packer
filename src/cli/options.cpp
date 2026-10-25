@@ -73,6 +73,7 @@ std::string	usage_text()
 	usage += "  --encryption <name>    predefined encryption algorithm (default: chacha20)\n";
 	usage += "  --restore <mode>       restore region, obsram or stomp (default: obsram)\n";
 	usage += "  --section <name>       restore section name, 1 to 8 chars (default: random)\n";
+	usage += "  -o, --output <file>    output path (default: output.exe)\n";
 	usage += "  -h, --help             show this message\n";
 	usage += "\n";
 	usage += "Available compression algorithms: " + compression::names() + "\n";
@@ -94,6 +95,7 @@ bool	parse_options(int argc, char **argv, Options &options, std::string &error)
 	options.compression = compression::find("lzma");
 	options.encryption = crypto::find("chacha20");
 	options.restore = RESTORE_OBSRAM;
+	options.output_path = "output.exe";
 	options.section.clear();
 	options.help = false;
 	options.auto_stub = true;
@@ -168,6 +170,19 @@ bool	parse_options(int argc, char **argv, Options &options, std::string &error)
 				return (false);
 			}
 			options.section = value;
+		}
+		else if (argument == "-o" || argument == "--output" || starts_with(argument, "--output="))
+		{
+			flag = "--output";
+			if (argument == "-o")
+				flag = "-o";
+			if (!take_value(argc, argv, index, argument, flag, value, error))
+			{
+				if (error.empty())
+					error = "unknown option: " + argument;
+				return (false);
+			}
+			options.output_path = value;
 		}
 		else if (!argument.empty() && argument[0] == '-')
 		{

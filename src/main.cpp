@@ -117,7 +117,7 @@ bool	build_output(Options &options)
 	uint32_t	restore_rva;
 	uint64_t	total_size;
 
-	output_path = "output.exe";
+	output_path = options.output_path;
 	if (!file::read(options.payload_path, payload))
 		return (false);
 	if (!fill_pe_info(payload, info))
@@ -237,6 +237,6 @@ int	main(int argc, char **argv)
 		OBSIDIAN_LOG("obsidian: packing failed\n");
 		return (1);
 	}
-	std::cout << "Packed binary created: .\\output.exe\n";
+	std::cout << "Packed binary created: " << options.output_path << "\n";
 	return (0);
 }

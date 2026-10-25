@@ -725,5 +725,5 @@ bool add_payload_section(std::string &stub, std::string name, uint32_t region_si
     virtual_size = region_size;
     if (virtual_size < 4096)
         virtual_size = 4096;
-    return (add_section(stub, name, virtual_size, key, 0xE0000040U, section_rva, raw_offset));
+    return (add_section(stub, name, virtual_size, key, 0xC0000040U, section_rva, raw_offset));
 }

@@ -63,19 +63,23 @@ The original executable is restored directly in memory. No temporary copy of the
 
 ### Requirements
 
-- Windows x86-64
-- MinGW-w64 with C++17 support
-- GNU Make
-- MinGW import library for Windows CNG (`-lbcrypt`)
+- A C++17 compiler and GNU Make
+- **Windows target**: MinGW-w64 with C++17 support, plus the MinGW import library for Windows CNG (`-lbcrypt`)
+- **Linux target**: no extra library; randomness comes from `/dev/urandom`
+- The Windows PE stub is produced by the `windows` target, or cross-compiled on Linux with mingw-w64 (`make stub-mingw`)
 
 ### Build
 
+The target platform is chosen explicitly. `windows` builds the packer, the PE runtime stub and the Windows resource; `linux` builds only the packer (the stub stays a Windows binary). With no target, the host is detected automatically.
+
 ```console
-mingw32-make parallel
-mingw32-make examples
+make windows     # packer + stub + resource (Windows PE)
+make linux       # packer only (runs on Linux, still emits a Windows PE)
+make parallel    # parallel build for the current host
+make examples    # Windows PE fixtures (windows target only)
 ```
 
-This creates:
+On Windows this creates:
 
 ```text
 obsidian.exe
@@ -85,13 +89,24 @@ examples/args_echo.exe
 examples/tls_demo.exe
 ```
 
+On Linux it creates a single `obsidian`, with no stub. To obtain a Windows stub from a Linux machine, cross-compile it with mingw-w64:
+
+```console
+make stub-mingw  # requires x86_64-w64-mingw32-g++ / -gcc
+```
+
 ### Pack
 
 ```console
 .\obsidian.exe .\examples\hello.exe
 ```
 
-The default stub is detected automatically and the packed binary is written to `output.exe`.
+The default stub is detected automatically and the packed binary is written to `output.exe`. Choose the output path with `-o`:
+
+```console
+.\obsidian.exe -o packed.exe .\payload.exe
+obsidian -o packed.exe ./payload.exe   # same command on Linux
+```
 
 Use a custom stub explicitly when needed:
 
@@ -504,6 +519,10 @@ Le nom `.obsram` est figé dans le code, c'était un mot-logo. Le packer accepte
 
 Option ajoutée dans `include/cli/options.hpp` et `src/cli/options.cpp` ; génération dans `src/main.cpp`.
 
+## Correctif — permissions de la section de restauration
+
+La section ajoutée par le packer était mappée `PAGE_EXECUTE_READWRITE` (RWX) au chargement, un indicateur suspect pour les outils d'analyse. Elle est repassée en lecture + écriture (`0xC0000040`), comme l'ancienne `.obsram`. L'exécution n'était pas nécessaire au mapping : `protect_sections` la rétablit au runtime, par section. Fichier : `src/pe/pe.cpp` (`add_payload_section`).
+
 ## Vérification
 
 Après rebuild (`mingw32-make parallel`), recherche brute sur `build/obsidian-stub.exe` et sur un `output.exe` fraîchement packé :
@@ -548,3 +567,22 @@ Aucun changement de `Makefile` n'était nécessaire pour `algorithm_names.cpp` (
 - **C** — porter le payload en vraie section PE plutôt qu'en overlay.
 - **E** — moteur de mutation au pack-time (junk, permutation de sections, clé d'obfuscation de chaînes par build).
 - **F** — l'overlay chiffré reste haute entropie ; à mesurer côté détecteurs.
+
+## Port Linux du packer — 2026-10-25
+
+Le packer tourne maintenant sur Linux et produit le **même PE Windows** que sous Windows. Le stub n'est **pas** porté : c'est un binaire Windows, inchangé.
+
+- **Seul fichier Windows-dépendant côté packer** : `src/packer/random.cpp` (le RNG). `BCryptGenRandom` sous `_WIN32`, `/dev/urandom` ailleurs. Tout le reste (PE, LZMA, ChaCha20, ressources, CLI) est du C++ portable.
+- **Makefile** : détection de l'hôte + cibles explicites `make windows` et `make linux`. Windows : packer + stub + ressource (`windres`), lié à `-lbcrypt`. Linux : packer seul, sans `-lbcrypt`, sans stub. La cible `stub-mingw` cross-compile le stub avec mingw-w64 s'il est installé.
+- **Nouvelle option `-o, --output <file>`** : chemin de sortie (défaut `output.exe`), pratique pour packer plusieurs binaires d'affilée.
+- Sous Linux, le packer lit un stub PE fourni (construit sous Windows ou via `make stub-mingw`) et écrit un PE packé identique octet pour octet au même build sous Windows.
+
+Commandes :
+
+```console
+make linux                 # packer seul
+make stub-mingw            # stub PE via mingw-w64 (optionnel)
+./obsidian -o packed.exe ./payload.exe
+```
+
+Fichiers : `src/packer/random.cpp`, `Makefile`, `include/cli/options.hpp`, `src/cli/options.cpp`, `src/main.cpp`, `README.md`.
