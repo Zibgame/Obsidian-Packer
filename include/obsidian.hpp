@@ -14,7 +14,7 @@
 #define OBSIDIAN_HPP
 
 #define OBSIDIAN_NAME "obsidian"
-#define OBSIDIAN_VERSION "0.0.1-alpha"
+#define OBSIDIAN_VERSION "0.1.0-alpha"
 
 #ifdef OBSIDIAN_DEBUG
 #define OBSIDIAN_LOG(...) do { std::cout << __VA_ARGS__; } while (0)

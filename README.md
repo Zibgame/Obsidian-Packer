@@ -30,6 +30,31 @@ It exists for offensive-security research: custom loader development, packer fin
 > [!CAUTION]
 > OBSIDIAN implements techniques also used by malware loaders. Use it only on binaries and systems you own or are explicitly authorized to test. Offensive capability is not authorization.
 
+## v0.1.0-alpha · Shifting Glass
+
+This release turns the first execution prototype into a configurable, cross-platform packing pipeline. The packer now runs on Windows and Linux while continuing to produce Windows x86-64 PE files.
+
+<table>
+  <tr>
+    <td><strong>Pipeline</strong></td>
+    <td>LZMA compression, ChaCha20 encryption and selectable restore backends</td>
+  </tr>
+  <tr>
+    <td><strong>Hardening</strong></td>
+    <td>Encoded footer, masked per-build key, randomized section names and quieter release stubs</td>
+  </tr>
+  <tr>
+    <td><strong>Compatibility</strong></td>
+    <td>Payload resources, icons and manifests are transferred to the packed executable</td>
+  </tr>
+  <tr>
+    <td><strong>Portability</strong></td>
+    <td>Native Windows builds plus a Linux packer and mingw-w64 stub cross-build</td>
+  </tr>
+</table>
+
+The old plaintext anchors—`OBSD`, `.obsram`, `OBSIDIAN_KEYSLOT`, algorithm names and release diagnostics—are no longer present in freshly packed binaries. See the [release notes](CHANGELOG.md) for the complete delta from `v0.0.1-alpha`.
+
 ## What it does
 
 ```text
@@ -362,7 +387,10 @@ No license has been selected. Until a license file is added, this repository doe
 
 ---
 
-# Journal de durcissement anti-fingerprint — 2026-10-25
+<details>
+<summary><strong>Engineering journal · anti-fingerprint hardening and Linux port</strong></summary>
+
+## Journal de durcissement anti-fingerprint — 2026-10-25
 
 Cette passe supprime les ancres statiques qui rendaient l'analyse du packer mécanique. Elle couvre les chantiers **A1, A2, A3, B1, B3 et D1**. Les sections plus haut décrivent l'ancien format (footer `OBSD` de 40 octets, `.obsram`, marqueur de keyslot) : elles sont désormais obsolètes sur ces points, remplacées par ce journal.
 
@@ -598,3 +626,5 @@ Deux déclencheurs vus par une analyse statique sont supprimés du stub.
 Fichiers : `src/stub/main.cpp`.
 
 Reste (non traité ici) : `basic_string::substr`, `vector::_M_realloc_append`, `Cannot convert character sequence` et les imports `libstdc++-6.dll` / `libgcc_s_seh-1.dll` proviennent du STL utilisé par le stub.
+
+</details>
