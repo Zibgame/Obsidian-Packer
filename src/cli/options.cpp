@@ -72,6 +72,7 @@ std::string	usage_text()
 	usage += "  --compression <name>   predefined compression algorithm (default: lzma)\n";
 	usage += "  --encryption <name>    predefined encryption algorithm (default: chacha20)\n";
 	usage += "  --restore <mode>       restore region, obsram or stomp (default: obsram)\n";
+	usage += "  --section <name>       restore section name, 1 to 8 chars (default: random)\n";
 	usage += "  -h, --help             show this message\n";
 	usage += "\n";
 	usage += "Available compression algorithms: " + compression::names() + "\n";
@@ -93,6 +94,7 @@ bool	parse_options(int argc, char **argv, Options &options, std::string &error)
 	options.compression = compression::find("lzma");
 	options.encryption = crypto::find("chacha20");
 	options.restore = RESTORE_OBSRAM;
+	options.section.clear();
 	options.help = false;
 	options.auto_stub = true;
 	index = 1;
@@ -150,6 +152,22 @@ bool	parse_options(int argc, char **argv, Options &options, std::string &error)
 				error = "unknown restore mode: " + value + " (available: " + loader::names() + ")";
 				return (false);
 			}
+		}
+		else if (argument == "--section" || starts_with(argument, "--section="))
+		{
+			flag = "--section";
+			if (!take_value(argc, argv, index, argument, flag, value, error))
+			{
+				if (error.empty())
+					error = "unknown option: " + argument;
+				return (false);
+			}
+			if (value.empty() || value.size() > 8)
+			{
+				error = "--section requires a name of 1 to 8 characters";
+				return (false);
+			}
+			options.section = value;
 		}
 		else if (!argument.empty() && argument[0] == '-')
 		{

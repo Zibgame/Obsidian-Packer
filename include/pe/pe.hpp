@@ -79,7 +79,7 @@ bool build_pe_image(std::string &payload, PEInfo &info, std::vector<char> &image
 bool read_import_dlls(std::string &payload,PEInfo &info,std::vector<std::string> &dlls,std::vector<ImportSymbol> &symbols);
 bool read_relocation_info(std::string &payload, PEInfo &info, size_t &blocks, size_t &entries, size_t &dir64);
 bool restore_original_pe(std::string &payload, PEInfo &info);
-bool add_restore_section(std::string &stub, uint32_t original_image_size, uint32_t &restore_rva);
+bool add_payload_section(std::string &stub, std::string name, uint32_t region_size, std::string key, uint32_t &section_rva);
 bool add_section(std::string &stub, std::string name, uint32_t virtual_size, std::string data, uint32_t characteristics, uint32_t &section_rva, size_t &raw_offset);
 bool rva_to_offset(std::string &payload, PEInfo &info, uint32_t rva, size_t &offset, size_t &available);
 

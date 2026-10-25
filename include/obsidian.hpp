@@ -6,7 +6,7 @@
 /*   By: marvin <marvin@student.42.fr>              +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/10/23 01:57:12 by marvin            #+#    #+#             */
-/*   Updated: 2026/10/24 03:40:00 by marvin           ###   ########.fr       */
+/*   Updated: 2026/10/25 02:37:00 by marvin           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -16,19 +16,17 @@
 #define OBSIDIAN_NAME "obsidian"
 #define OBSIDIAN_VERSION "0.0.1-alpha"
 
-/*
-** Packed file layout:
-**
-**   [ stub image                      ]
-**   [ stored payload (compressed then encrypted) ]
-**   [ footer                          ]
-*/
+#ifdef OBSIDIAN_DEBUG
+#define OBSIDIAN_LOG(...) do { std::cout << __VA_ARGS__; } while (0)
+#else
+#define OBSIDIAN_LOG(...) ((void)0)
+#endif
 
-#define OBSD "OBSD"
-#define OBSD_VERSION 3
-#define OBSD_FOOTER_SIZE 40
+#define OBSD_VERSION 4
+#define OBSD_FOOTER_SIZE 48
+#define OBSD_TAG 0x6A09E667u
 
-/* Footer field offsets. */
+#define OBSD_OFFSET_TAG 0
 #define OBSD_OFFSET_VERSION 4
 #define OBSD_OFFSET_COMPRESSION 5
 #define OBSD_OFFSET_ENCRYPTION 6
@@ -38,15 +36,32 @@
 #define OBSD_OFFSET_STORED_SIZE 20
 #define OBSD_OFFSET_ORIGINAL_SIZE 28
 #define OBSD_OFFSET_RESTORE 36
-
-/*
-** The stub reserves a key slot whose marker lets the packer locate it in the
-** stub image. The 32 bytes that follow the marker hold the payload key.
-*/
+#define OBSD_OFFSET_KEY_RVA 40
+#define OBSD_OFFSET_REGION_SIZE 44
 
 #define OBSIDIAN_KEY_SIZE 32
-#define OBSIDIAN_KEY_MARKER "OBSIDIAN_KEYSLOT"
-#define OBSIDIAN_KEY_MARKER_SIZE 16
-#define OBSIDIAN_KEY_SLOT_SIZE 48
+
+inline unsigned long long obsidian_footer_avalanche(unsigned long long value)
+{
+	value = value ^ (value << 13);
+	value = value ^ (value >> 7);
+	value = value ^ (value << 17);
+	return (value);
+}
+
+inline void obsidian_footer_cipher(unsigned char *data, unsigned int size, unsigned long long seed)
+{
+	unsigned long long state;
+	unsigned int index;
+
+	state = seed ^ 0x9E3779B97F4A7C15ULL;
+	index = 0;
+	while (index < size)
+	{
+		state = obsidian_footer_avalanche(state);
+		data[index] = data[index] ^ static_cast<unsigned char>(state & 0xFF);
+		index++;
+	}
+}
 
 #endif

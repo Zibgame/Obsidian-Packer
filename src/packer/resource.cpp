@@ -11,11 +11,15 @@
 /* ************************************************************************** */
 
 #include "packer/resource.hpp"
+#include "obsidian.hpp"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+
+#ifdef OBSIDIAN_DEBUG
 #include <iostream>
+#endif
 
 namespace
 {
@@ -204,17 +208,17 @@ bool	packer::copy_resources(std::string &stub, std::string &payload, PEInfo &inf
 
 	if (info.optional.resource_rva == 0 || info.optional.resource_size == 0)
 	{
-		std::cout << "obsidian: payload has no resources, keeping the stub's own\n";
+		OBSIDIAN_LOG("obsidian: payload has no resources, keeping the stub's own\n");
 		return (true);
 	}
 	if (!section_of(info, info.optional.resource_rva, payload_section))
 	{
-		std::cout << "obsidian: resource directory is not covered by a section\n";
+		OBSIDIAN_LOG("obsidian: resource directory is not covered by a section\n");
 		return (true);
 	}
 	if (!rva_to_offset(payload, info, info.optional.resource_rva, offset, available))
 	{
-		std::cout << "obsidian: resource directory is not covered by a section\n";
+		OBSIDIAN_LOG("obsidian: resource directory is not covered by a section\n");
 		return (true);
 	}
 	/*
@@ -235,13 +239,13 @@ bool	packer::copy_resources(std::string &stub, std::string &payload, PEInfo &inf
 	probe = blob;
 	if (!shift_tree(probe, 0, probe.size(), 0, info.optional.resource_rva, 0, 0))
 	{
-		std::cout << "obsidian: resource directory is malformed\n";
+		OBSIDIAN_LOG("obsidian: resource directory is malformed\n");
 		return (true);
 	}
 	if (!fill_pe_info(stub, stub_info)
 		|| !find_resource_section(stub_info, section, section_index))
 	{
-		std::cout << "obsidian: stub has no resource section to reuse\n";
+		OBSIDIAN_LOG("obsidian: stub has no resource section to reuse\n");
 		return (true);
 	}
 	optional_offset = static_cast<size_t>(read_u32(stub, 0x3C)) + 24;
@@ -266,20 +270,20 @@ bool	packer::copy_resources(std::string &stub, std::string &payload, PEInfo &inf
 			info.optional.resource_rva,
 			section.virtual_address - info.optional.resource_rva, 0))
 		{
-			std::cout << "obsidian: could not relocate the resource directory\n";
+			OBSIDIAN_LOG("obsidian: could not relocate the resource directory\n");
 			return (false);
 		}
 		write_u32(stub, optional_offset + 128, section.virtual_address);
 		write_u32(stub, optional_offset + 132, dir_size);
-		std::cout << "obsidian: payload resources replaced the stub's own ("
-			<< blob.size() << " bytes)\n";
+		OBSIDIAN_LOG("obsidian: payload resources replaced the stub's own ("
+			<< blob.size() << " bytes)\n");
 		return (true);
 	}
 	raw_start = align_up(stub.size(), file_alignment);
 	raw_size = align_up(blob.size(), file_alignment);
 	if (raw_size > UINT32_MAX)
 	{
-		std::cout << "obsidian: resource section would not fit in the image\n";
+		OBSIDIAN_LOG("obsidian: resource section would not fit in the image\n");
 		return (false);
 	}
 	if (raw_start > stub.size())
@@ -294,7 +298,7 @@ bool	packer::copy_resources(std::string &stub, std::string &payload, PEInfo &inf
 	if (!shift_tree(stub, raw_offset, blob.size(), 0, info.optional.resource_rva,
 		section.virtual_address - info.optional.resource_rva, 0))
 	{
-		std::cout << "obsidian: could not relocate the resource directory\n";
+		OBSIDIAN_LOG("obsidian: could not relocate the resource directory\n");
 		return (false);
 	}
 	write_u32(stub, header_offset + 8, static_cast<uint32_t>(blob.size()));
@@ -314,7 +318,7 @@ bool	packer::copy_resources(std::string &stub, std::string &payload, PEInfo &inf
 		address = align_up(cursor, section_alignment);
 		if (address > UINT32_MAX)
 		{
-			std::cout << "obsidian: resource section would not fit in the image\n";
+			OBSIDIAN_LOG("obsidian: resource section would not fit in the image\n");
 			return (false);
 		}
 		write_u32(stub, table_offset + index * 40 + 12, static_cast<uint32_t>(address));
@@ -345,7 +349,7 @@ bool	packer::copy_resources(std::string &stub, std::string &payload, PEInfo &inf
 	new_image_size = align_up(cursor, section_alignment);
 	if (new_image_size > UINT32_MAX)
 	{
-		std::cout << "obsidian: resource section would not fit in the image\n";
+		OBSIDIAN_LOG("obsidian: resource section would not fit in the image\n");
 		return (false);
 	}
 	old_initialized = read_u32(stub, optional_offset + 8);
@@ -361,7 +365,7 @@ bool	packer::copy_resources(std::string &stub, std::string &payload, PEInfo &inf
 	write_u32(stub, optional_offset + 56, static_cast<uint32_t>(new_image_size));
 	write_u32(stub, optional_offset + 128, section.virtual_address);
 	write_u32(stub, optional_offset + 132, dir_size);
-	std::cout << "obsidian: payload resources grew the .rsrc section ("
-		<< blob.size() << " bytes)\n";
+	OBSIDIAN_LOG("obsidian: payload resources grew the .rsrc section ("
+		<< blob.size() << " bytes)\n");
 	return (true);
 }

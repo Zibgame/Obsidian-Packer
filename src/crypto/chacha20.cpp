@@ -37,26 +37,20 @@ uint32_t	rotl32(uint32_t value, int shift)
 	return ((value << shift) | (value >> (32 - shift)));
 }
 
-// "expand 32-byte k" assembled from characters rather than written as a
-// contiguous string, so it never appears literally in the stub image.
+void	store_word(uint32_t *slot, uint32_t value)
+{
+	volatile uint32_t	*target;
+
+	target = slot;
+	*target = value;
+}
+
 void	state_constants(uint32_t *state)
 {
-	state[0] = static_cast<uint32_t>('e')
-		| (static_cast<uint32_t>('x') << 8)
-		| (static_cast<uint32_t>('p') << 16)
-		| (static_cast<uint32_t>('a') << 24);
-	state[1] = static_cast<uint32_t>('n')
-		| (static_cast<uint32_t>('d') << 8)
-		| (static_cast<uint32_t>(' ') << 16)
-		| (static_cast<uint32_t>('3') << 24);
-	state[2] = static_cast<uint32_t>('2')
-		| (static_cast<uint32_t>('-') << 8)
-		| (static_cast<uint32_t>('b') << 16)
-		| (static_cast<uint32_t>('y') << 24);
-	state[3] = static_cast<uint32_t>('t')
-		| (static_cast<uint32_t>('e') << 8)
-		| (static_cast<uint32_t>(' ') << 16)
-		| (static_cast<uint32_t>('k') << 24);
+	store_word(&state[0], 0x61707865u);
+	store_word(&state[1], 0x3320646eu);
+	store_word(&state[2], 0x79622d32u);
+	store_word(&state[3], 0x6b206574u);
 }
 
 uint32_t	load32_le(unsigned char *data)

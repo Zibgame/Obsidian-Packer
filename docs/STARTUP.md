@@ -60,7 +60,7 @@ Chaque étape est validée par `validate_restored_image()` :
 ## 5. Ce qui est validé et ce qui ne l'est pas
 
 - L'exécution réelle est validée uniquement sur les binaires du projet
-  (`obsidian.exe`, `obsidian-stub.exe`) : le original reconstruit
+  (`obsidian.exe`, `build/obsidian-stub.exe`) : le original reconstruit
   s'exécute, affiche son propre message et retourne son propre code de
   sortie. Aucun binaire tiers n'a été testé.
 - Programmes dépendant de TLS callbacks : supportés pour le thread

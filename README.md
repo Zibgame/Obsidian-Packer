@@ -36,7 +36,7 @@ It exists for offensive-security research: custom loader development, packer fin
                          ┌────────────────────┐
                          │   obsidian-stub    │
                          └─────────┬──────────┘
-                                   │ inject .obsram
+                                   │ add restore section
                                    ▼
 ┌──────────────┐   validate   ┌──────────────┐   append payload   ┌──────────────┐
 │  payload.exe │ ───────────► │   obsidian   │ ────────────────► │  output.exe  │
@@ -53,8 +53,8 @@ It exists for offensive-security research: custom loader development, packer fin
 | --- | --- |
 | Validates PE32+ / AMD64 input | Reads its own embedded payload |
 | Compresses with LZMA and encrypts with ChaCha20 | Decrypts and decompresses the original PE |
-| Copies the payload's PE resources into the stub | Restores into `.obsram` or a stomp region |
-| Injects a per-build key and appends a versioned `OBSD` footer | Applies `DIR64` relocations and resolves imports |
+| Copies the payload's PE resources into the stub | Restores into a randomly named or configurable section whose RVA comes from the footer, or into a stomp region |
+| Stores a masked per-build key in the restore section and records its RVA in a fully encoded 48-byte footer with no plaintext magic | Applies `DIR64` relocations and resolves imports |
 | Produces a standalone `output.exe` | Restores TLS, permissions and execution |
 
 The original executable is restored directly in memory. No temporary copy of the unpacked PE is written to disk.
@@ -79,7 +79,7 @@ This creates:
 
 ```text
 obsidian.exe
-obsidian-stub.exe
+build/obsidian-stub.exe
 examples/hello.exe
 examples/args_echo.exe
 examples/tls_demo.exe
@@ -105,7 +105,15 @@ Select the packing backends and restore strategy from the command line:
 .\obsidian.exe --compression lzma --encryption chacha20 --restore stomp .\payload.exe
 ```
 
-The available values are currently `lzma`, `chacha20`, and the `obsram` or `stomp` restore modes. `obsram` is the default. `stomp` is experimental: it attempts to restore the image into a suitable loaded system module and falls back to `.obsram` when no candidate is available. Run `.\obsidian.exe --help` for the complete syntax.
+Set the embedded restore-section name explicitly when needed:
+
+```console
+.\obsidian.exe --section .xdata .\payload.exe
+```
+
+Section names must be 1 to 8 characters. Without `--section`, the packer generates a random name consisting of a dot followed by seven lowercase letters or digits, such as `.j696vwm`.
+
+The available values are currently `lzma`, `chacha20`, and the `obsram` or `stomp` restore modes. `obsram` is the default. `stomp` is experimental: it attempts to restore the image into a suitable loaded system module and falls back to the restore section whose RVA is stored in the footer when no candidate is available. Run `.\obsidian.exe --help` for the complete syntax.
 
 ### Execute
 
@@ -133,7 +141,12 @@ OBSIDIAN is a **working execution prototype**, not a finished universal packer.
 | LZMA compression | **Working** |
 | ChaCha20 payload encryption | **Working** |
 | Pluggable compression and encryption registries | **Working** |
-| Runtime `.obsram` injection | **Working** |
+| Encoded 48-byte footer (no `OBSD` magic) | **Working** |
+| Key carried by a section, RVA in footer | **Working** |
+| Configurable/random restore-section name | **Working** |
+| Diagnostics stripped in release (`OBSIDIAN_DEBUG`) | **Working** |
+| Algorithm names kept out of the stub | **Working** |
+| Runtime restore-section reconstruction | **Working** |
 | Module-stomp restore mode with fallback | **Experimental** |
 | In-memory PE reconstruction | **Working** |
 | `IMAGE_REL_BASED_DIR64` relocations | **Working** |
@@ -158,35 +171,50 @@ End-to-end execution has been validated on the fixtures shipped with this reposi
 
 When `output.exe` starts, the stub:
 
-1. opens its own executable and reads the final 40-byte, versioned footer;
+1. opens its own executable and reads and decodes the final 48-byte footer;
 2. extracts the stored payload and selects its encryption and compression backends;
-3. unmasks the embedded per-build key, decrypts with ChaCha20 and decompresses with LZMA;
-4. selects the reserved `.obsram` section or a compatible module-stomp region;
-5. copies PE headers and sections into memory layout;
-6. applies base relocations for the selected restore address;
-7. loads imported DLLs and patches the original IAT;
-8. registers `.pdata` through `RtlAddFunctionTable`;
-9. allocates static TLS for the main thread;
-10. rebuilds page protections from section characteristics;
-11. validates the restored image and entry point;
-12. calls TLS callbacks with `DLL_PROCESS_ATTACH`;
-13. transfers execution to the original entry point.
+3. reads the masked 32-byte per-build key from the section at the module base plus `footer.key_rva`;
+4. unmasks the key, decrypts with ChaCha20 and decompresses with LZMA;
+5. selects the restore section whose RVA comes from the footer, or a compatible module-stomp region;
+6. copies PE headers and sections into memory layout;
+7. applies base relocations for the selected restore address;
+8. loads imported DLLs and patches the original IAT;
+9. registers `.pdata` through `RtlAddFunctionTable`;
+10. allocates static TLS for the main thread;
+11. rebuilds page protections from section characteristics;
+12. validates the restored image and entry point;
+13. calls TLS callbacks with `DLL_PROCESS_ATTACH`;
+14. transfers execution to the original entry point.
 
 The packed file layout is deliberately small:
 
 ```text
-┌──────────────────────────────────────────┐
-│ Modified PE runtime stub                 │
-│ └── .obsram: restored image memory       │
-├──────────────────────────────────────────┤
-│ LZMA-compressed, ChaCha20-encrypted PE    │
-├────────┬─────────┬──────────┬─────────────┤
-│ OBSD   │ version │ backends │ nonce       │
-│ 4 B    │ 1 B     │ 2 B      │ up to 12 B  │
-├────────┴─────────┴──────────┴──────┬──────┤
-│ stored/original sizes (2 × uint64) │ mode │
-└────────────────────────────────────┴──────┘
+┌──────────────────────────────────────────────────┐
+│ Modified PE runtime stub                         │
+│ └── restore section: masked key + image region   │
+├──────────────────────────────────────────────────┤
+│ LZMA-compressed, ChaCha20-encrypted PE            │
+├──────────────────────────────────────────────────┤
+│ Encoded footer (48 bytes, masked at rest)        │
+└──────────────────────────────────────────────────┘
 ```
+
+The footer is masked at rest by the xorshift64 keystream using the total packed file size as its seed. Its decoded layout is:
+
+| Offset | Size | Field |
+| :---: | :---: | --- |
+| 0 | 4 | Internal tag (`OBSD_TAG`, `0x6A09E667`) |
+| 4 | 1 | Format version (`4`) |
+| 5 | 1 | Compression identifier |
+| 6 | 1 | Encryption identifier |
+| 7 | 1 | Nonce size |
+| 8 | 12 | Nonce storage (`OBSD_NONCE_MAX`) |
+| 20 | 8 | Stored payload size |
+| 28 | 8 | Original payload size |
+| 36 | 1 | Restore mode |
+| 37 | 3 | Padding |
+| 40 | 4 | Key and restore-region RVA |
+| 44 | 4 | Restore-region size |
 
 </details>
 
@@ -207,6 +235,7 @@ Obsidian-Packer/
 │   ├── packer/            Packer helpers
 │   └── pe/                PE parser interface
 ├── src/
+│   ├── algorithm_names.cpp Packer-only algorithm names and CLI lookup
 │   ├── cli/               Command-line parser
 │   ├── compression/       LZMA backend and registry
 │   ├── crypto/            ChaCha20 backend and registry
@@ -236,7 +265,7 @@ INSPECT  ─►  PACK  ─►  VALIDATE  ─►  EXECUTE  ─►  ANALYZE  ─�
 
 Planned offensive research work:
 
-- randomized section names, metadata and layout;
+- randomized metadata and broader layout mutation;
 - interchangeable compression and encoding strategies;
 - multiple runtime restoration paths;
 - deterministic builds for debugging;
@@ -262,7 +291,7 @@ OBSIDIAN rejects states it cannot restore safely.
 - The `stomp` restore mode is experimental and is not compatible with every payload or host module.
 - Authenticode signatures are invalidated by packing.
 - Encryption is implemented, but it does not provide authenticity or tamper detection.
-- `.obsram`, `OBSD`, the key slot and the current stub remain stable detection surfaces.
+- The current stub remains the primary stable detection surface until a mutation engine is implemented; the restore-section name, footer bytes and key location are no longer fixed plaintext anchors.
 - Only repository fixtures have been validated end to end.
 
 These are engineering limits, not fine print. If OBSIDIAN cannot prove that the restored image is safe to launch, it should fail hard.
@@ -274,6 +303,9 @@ These are engineering limits, not fine print. If OBSIDIAN cannot prove that the 
 - [x] ChaCha20 payload encryption and per-build key generation
 - [x] Configurable CLI and backend registries
 - [x] Runtime section injection
+- [x] Encoded 48-byte footer without plaintext magic
+- [x] Masked key carried by the restore section, with its RVA in the footer
+- [x] Configurable and randomized restore-section names
 - [x] Experimental module-stomp restore mode
 - [x] Payload resource transfer
 - [x] Memory-layout reconstruction
@@ -312,3 +344,207 @@ No license has been selected. Until a license file is added, this repository doe
 <p align="center">
   <strong>BLACK GLASS. VIOLET FRACTURE. NO FALSE PROMISES.</strong>
 </p>
+
+---
+
+# Journal de durcissement anti-fingerprint — 2026-10-25
+
+Cette passe supprime les ancres statiques qui rendaient l'analyse du packer mécanique. Elle couvre les chantiers **A1, A2, A3, B1, B3 et D1**. Les sections plus haut décrivent l'ancien format (footer `OBSD` de 40 octets, `.obsram`, marqueur de keyslot) : elles sont désormais obsolètes sur ces points, remplacées par ce journal.
+
+## Ce qui était exposé
+
+Analyse octet par octet des trois binaires avant la passe :
+
+| Chaîne | Fichier | Offset |
+| --- | --- | :---: |
+| `OBSIDIAN_KEYSLOT` | `obsidian-stub.exe` / `output.exe` | `0x17800` |
+| `expand 32-byte k` | `obsidian-stub.exe` / `output.exe` | `0x18520` |
+| `chacha20`, `lzma` | `obsidian-stub.exe` / `output.exe` | registres `.rdata` |
+| messages `obsidian: ...` | `obsidian-stub.exe` / `output.exe` | partout |
+
+Chaque étape du déballage avait un point d'ancrage repérable par `strings` : magic `OBSD` en fin de fichier, marqueur du slot de clé, noms d'algorithmes, noms de diagnostic, nom de section `.obsram`.
+
+## A1 — Plus de messages de diagnostic dans le stub
+
+Un macro `OBSIDIAN_LOG(...)` remplace tous les `std::cout` de diagnostic. En release il se réduit à `((void)0)`, donc les littéraux et les appels disparaissent du binaire. En debug (`-DOBSIDIAN_DEBUG`) la sortie revient telle quelle.
+
+```c
+#ifdef OBSIDIAN_DEBUG
+#define OBSIDIAN_LOG(...) do { std::cout << __VA_ARGS__; } while (0)
+#else
+#define OBSIDIAN_LOG(...) ((void)0)
+#endif
+```
+
+`<iostream>` n'est plus inclus dans les unités de compilation partagées avec le stub sauf en debug, ce qui retire au passage l'initialisation des flux côté loader.
+
+Fichiers touchés : `include/obsidian.hpp`, `src/stub/main.cpp`, `src/pe/pe.cpp`, `src/packer/resource.cpp`, `src/main.cpp`. Les sorties non-diagnostiques du packer (résumé de build, `--help`) sont conservées.
+
+Pour déboguer : `mingw32-make CXXFLAGS="-std=c++17 -O2 -Wall -Wextra -Werror -pedantic -DOBSIDIAN_DEBUG"`.
+
+## A2 — Noms d'algorithmes sortis du stub
+
+Le champ `name` est retiré de `crypto::Algorithm` et `compression::Algorithm`. Les tables partagées (`src/crypto/registry.cpp`, `src/compression/registry.cpp`) ne portent plus que `id` et les pointeurs de fonctions, donc plus aucun littéral `"chacha20"` ni `"lzma"` n'est référencé dans le stub.
+
+Les noms, `find()` et `names()` sont déplacés dans `src/algorithm_names.cpp`, compilé uniquement dans le packer (fichier situé à la racine de `src/`, donc hors de `COMMON_SOURCES` du `Makefile`, donc absent du stub). `name_of(id)` remplace l'accès `->name` côté packer.
+
+## A3 — Constantes ChaCha reconstruites proprement
+
+L'ancienne construction d'`"expand 32-byte k"` par un `OR` de caractères était censée éviter le littéral : `g++ -O2` coalesçait quand même les quatre mots en un bloc de 16 octets placé dans `.rdata`, et la chaîne finissait telle quelle dans le binaire.
+
+Les constantes sont maintenant stockées via un store `volatile`, ce qui interdit au compilateur de recoller les quatre mots en une constante vectorielle :
+
+```cpp
+void	store_word(uint32_t *slot, uint32_t value)
+{
+	volatile uint32_t	*target;
+
+	target = slot;
+	*target = value;
+}
+
+void	state_constants(uint32_t *state)
+{
+	store_word(&state[0], 0x61707865u);
+	store_word(&state[1], 0x3320646eu);
+	store_word(&state[2], 0x79622d32u);
+	store_word(&state[3], 0x6b206574u);
+}
+```
+
+Vérifié après build : `expand 32-byte k` n'apparaît plus dans `build/obsidian-stub.exe` ni `output.exe` (recherche octet → `-1`). Fichier : `src/crypto/chacha20.cpp`.
+
+## B1 — Plus de marqueur de keyslot
+
+Le tableau `obsidian_key_slot[]` initialisé avec `OBSIDIAN_KEYSLOT` et l'étape `inject_key()` du packer sont supprimés. Le packer n'écrit plus la clé à une adresse trouvée par marqueur littéral.
+
+À la place, le packer ajoute au stub une section qui porte la clé (32 octets masqués, en tête de section) et note son RVA dans le footer. Le stub lit la clé et calcule l'adresse de restauration depuis sa propre base :
+
+```cpp
+base = reinterpret_cast<char *>(GetModuleHandleA(NULL));
+key[index] = static_cast<unsigned char>(base[footer.key_rva + index]);
+```
+
+Plus aucun marqueur à grepper. `find_obsram()` disparaît aussi : la région de restauration vient de `footer.key_rva` / `footer.region_size`, plus d'un nom de section. Fichiers : `include/obsidian.hpp`, `include/pe/pe.hpp`, `src/pe/pe.cpp`, `src/stub/main.cpp`, `src/main.cpp`.
+
+## B3 — Magic `OBSD` cassée, footer encodé
+
+### Le problème
+
+Le footer était une structure en clair à offset fixe (`EOF-40`) commençant par la signature `"OBSD"`. N'importe qui pouvait le localiser par `strings`, en lire les champs (`stored_size`, `nonce`, ids) et carver le payload directement.
+
+### L'encodage
+
+Le footer fait 48 octets. On construit son clair, puis on le chiffre intégralement avec un **keystream xorshift64 dont la graine dépend de la taille du fichier** — donc unique par sortie, sans constante stockée côté stub :
+
+```c
+inline unsigned long long obsidian_footer_avalanche(unsigned long long value)
+{
+	value = value ^ (value << 13);
+	value = value ^ (value >> 7);
+	value = value ^ (value << 17);
+	return (value);
+}
+
+inline void obsidian_footer_cipher(unsigned char *data, unsigned int size, unsigned long long seed)
+{
+	unsigned long long state;
+	unsigned int index;
+
+	state = seed ^ 0x9E3779B97F4A7C15ULL;
+	index = 0;
+	while (index < size)
+	{
+		state = obsidian_footer_avalanche(state);
+		data[index] = data[index] ^ static_cast<unsigned char>(state & 0xFF);
+		index++;
+	}
+}
+```
+
+- **Packer** : `seed` = taille totale (`stub + payload + 48`).
+- **Stub** : `seed` = taille de son propre fichier (`GetFileSizeEx`), identique par construction, puis il déchiffre les 48 derniers octets et vérifie un **tag interne** (`OBSD_TAG`, `0x6A09E667`) qui n'existe qu'après décodage.
+
+Résultat : à l'octet, le footer ressemble à du bruit, et chaque `output.exe` produit un footer différent. Plus de `"OBSD"` à offset fixe, plus de structure lisible. Exemple de footer stocké (48 derniers octets) :
+
+```text
+e8 0e c4 02 e8 52 c0 d2 dc e3 f4 51 52 3e 67 d5 e3 12 e4 43 1e 66 16
+92 6f 61 59 c1 7d c2 5c 66 b0 73 65 4f 95 fa 67 c3 96 8f 94 b5 4a ae 0f d5
+```
+
+Limite honnête : c'est de l'obfuscation structurelle solide contre `strings`, YARA et le carving naïf (la graine n'est pas stockée), pas du chiffrement fort — un analyste qui désassemble le stub retrouve le schéma. C'est le même niveau de compromis que le reste des transformations.
+
+### Layout clair du footer (48 octets, avant chiffrement)
+
+| Offset | Taille | Champ |
+| :---: | :---: | --- |
+| 0 | 4 | tag interne `OBSD_TAG` |
+| 4 | 1 | version de format (`4`) |
+| 5 | 1 | identifiant de compression |
+| 6 | 1 | identifiant de chiffrement |
+| 7 | 1 | taille du nonce |
+| 8 | 12 | nonce (max `OBSD_NONCE_MAX`) |
+| 20 | 8 | taille de la charge stockée |
+| 28 | 8 | taille de l'original |
+| 36 | 1 | mode de restauration |
+| 37 | 3 | padding |
+| 40 | 4 | RVA de la clé / région de restauration |
+| 44 | 4 | taille de la région de restauration |
+
+Fichiers : `include/obsidian.hpp`, `src/main.cpp`, `src/stub/main.cpp`.
+
+## D1 — Nom de section personnalisable
+
+Le nom `.obsram` est figé dans le code, c'était un mot-logo. Le packer accepte maintenant `--section <name>` (1 à 8 caractères). Par défaut, s'il n'est pas fourni, il **génère un nom aléatoire** à la volée (`.` suivi de 7 caractères `[a-z0-9]`). Le stub ne dépend plus du nom : il utilise le RVA du footer, donc un nom aléatoire par build est gratuit.
+
+```console
+.\obsidian.exe --section .xdata .\payload.exe
+.\obsidian.exe .\payload.exe            # nom aléatoire, ex: .j696vwm
+```
+
+Option ajoutée dans `include/cli/options.hpp` et `src/cli/options.cpp` ; génération dans `src/main.cpp`.
+
+## Vérification
+
+Après rebuild (`mingw32-make parallel`), recherche brute sur `build/obsidian-stub.exe` et sur un `output.exe` fraîchement packé :
+
+| Chaîne | Avant | Après |
+| --- | :---: | :---: |
+| `OBSIDIAN_KEYSLOT` | présent | absent |
+| `expand 32-byte k` | présent | absent |
+| `chacha20` | présent | absent |
+| `lzma` | présent | absent |
+| `obsidian:` (diagnostics) | présent | absent |
+| `.obsram` | présent | absent |
+| `OBSD` (magic) | présent | absent |
+
+Test de bout en bout : `.\obsidian.exe .\examples\hello.exe` puis `.\output.exe` → exécution du payload, code de sortie `0`. Testé aussi en `--restore stomp --section .xdata`.
+
+## Fichiers modifiés
+
+```text
+include/obsidian.hpp                macro OBSIDIAN_LOG, footer v4 (48 o), cipher, tag, offsets
+include/crypto/crypto.hpp           champ name retiré, name_of ajouté
+include/compression/compression.hpp champ name retiré, name_of ajouté
+include/cli/options.hpp             option section
+include/pe/pe.hpp                   add_payload_section
+src/algorithm_names.cpp             NOUVEAU — noms + find/names/name_of (packer seulement)
+src/crypto/registry.cpp             table sans noms, find/names retirés
+src/compression/registry.cpp        table sans noms, find/names retirés
+src/crypto/chacha20.cpp             constantes via store volatile
+src/cli/options.cpp                 option --section
+src/pe/pe.cpp                       add_payload_section, diagnostics OBSIDIAN_LOG
+src/packer/resource.cpp             diagnostics OBSIDIAN_LOG
+src/main.cpp                        footer encodé, section porteuse de clé, nom aléatoire
+src/stub/main.cpp                   clé via RVA, footer décodé, find_obsram retiré, logs retirés
+README.md                           ce journal
+```
+
+Aucun changement de `Makefile` n'était nécessaire pour `algorithm_names.cpp` (pris par `MAIN_SOURCES`).
+
+## Reste à faire (non traité ici)
+
+- **D2** — réduire la grappe d'imports du loader (résolution PEB + hash, au lieu de `VirtualAlloc`/`VirtualProtect`/`LoadLibraryA`/`GetProcAddress`).
+- **C** — porter le payload en vraie section PE plutôt qu'en overlay.
+- **E** — moteur de mutation au pack-time (junk, permutation de sections, clé d'obfuscation de chaînes par build).
+- **F** — l'overlay chiffré reste haute entropie ; à mesurer côté détecteurs.

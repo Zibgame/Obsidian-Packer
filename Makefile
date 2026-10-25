@@ -16,7 +16,8 @@ CLI_DIR := $(SRC_DIR)/cli
 PACKER_DIR := $(SRC_DIR)/packer
 LOADER_DIR := $(SRC_DIR)/loader
 LZMA_DIR := $(SRC_DIR)/third_party/lzma
-OBJ_DIR := build/obj
+BUILD_DIR := build
+OBJ_DIR := $(BUILD_DIR)/obj
 BIN_DIR := .
 MAIN_SOURCES := $(wildcard $(SRC_DIR)/*.cpp) $(wildcard $(CLI_DIR)/*.cpp) $(wildcard $(PACKER_DIR)/*.cpp) $(wildcard $(LOADER_DIR)/*.cpp)
 STUB_SOURCES := $(wildcard $(STUB_DIR)/*.cpp)
@@ -30,19 +31,25 @@ DEPENDENCIES := $(MAIN_OBJECTS:.o=.d) $(STUB_OBJECTS:.o=.d) $(COMMON_OBJECTS:.o=
 
 ifeq ($(OS),Windows_NT)
 TARGET := $(BIN_DIR)/$(NAME).exe
-STUB_TARGET := $(BIN_DIR)/$(NAME)-stub.exe
+STUB_TARGET := $(BUILD_DIR)/$(NAME)-stub.exe
 PACKED_TARGET := output.exe
 EXTRACTED_TARGET := extracted.bin
 JOBS ?= $(NUMBER_OF_PROCESSORS)
+WINDRES ?= windres
+WINDOWS_ICON := assets/windows/obsidian.ico
+WINDOWS_RESOURCE_SOURCE := assets/windows/obsidian.rc
+WINDOWS_RESOURCE_OBJECT := $(OBJ_DIR)/windows/obsidian-resource.o
 else
 TARGET := $(BIN_DIR)/$(NAME)
-STUB_TARGET := $(BIN_DIR)/$(NAME)-stub
+STUB_TARGET := $(BUILD_DIR)/$(NAME)-stub
 PACKED_TARGET := output
 EXTRACTED_TARGET := extracted.bin
 JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
+WINDOWS_RESOURCE_OBJECT :=
 endif
 
 ifneq ($(findstring sh,$(notdir $(SHELL))),)
+WINDRES_CPP ?= $(shell command -v $(CC)) -E -xc-header -DRC_INVOKED
 define make-dir
 	@mkdir -p "$1"
 endef
@@ -53,6 +60,7 @@ define remove-file
 	@rm -f "$1"
 endef
 else
+WINDRES_CPP ?= $(CC) -E -xc-header -DRC_INVOKED
 define make-dir
 	@if not exist "$(subst /,\,$1)" mkdir "$(subst /,\,$1)"
 endef
@@ -78,10 +86,11 @@ all: $(TARGET) $(STUB_TARGET)
 parallel:
 	+$(MAKE) --jobs=$(JOBS) all
 
-$(TARGET): $(MAIN_OBJECTS) $(COMMON_OBJECTS) $(LZMA_OBJECTS)
-	$(CXX) $(LDFLAGS) $(MAIN_OBJECTS) $(COMMON_OBJECTS) $(LZMA_OBJECTS) $(LDLIBS) -o $@
+$(TARGET): $(MAIN_OBJECTS) $(COMMON_OBJECTS) $(LZMA_OBJECTS) $(WINDOWS_RESOURCE_OBJECT)
+	$(CXX) $(LDFLAGS) $(MAIN_OBJECTS) $(COMMON_OBJECTS) $(LZMA_OBJECTS) $(WINDOWS_RESOURCE_OBJECT) $(LDLIBS) -o $@
 
 $(STUB_TARGET): $(STUB_OBJECTS) $(COMMON_OBJECTS) $(LZMA_OBJECTS)
+	$(call make-dir,$(@D))
 	$(CXX) $(LDFLAGS) $(STUB_OBJECTS) $(COMMON_OBJECTS) $(LZMA_OBJECTS) $(LDLIBS) -o $@
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
@@ -95,6 +104,12 @@ $(OBJ_DIR)/stub/%.o: $(STUB_DIR)/%.cpp
 $(OBJ_DIR)/lzma/%.o: $(LZMA_DIR)/%.c
 	$(call make-dir,$(@D))
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+ifeq ($(OS),Windows_NT)
+$(WINDOWS_RESOURCE_OBJECT): $(WINDOWS_RESOURCE_SOURCE) $(WINDOWS_ICON)
+	$(call make-dir,$(@D))
+	$(WINDRES) --preprocessor="$(WINDRES_CPP)" -Iassets/windows $< -O coff -o $@
+endif
 
 clean:
 	$(call remove-dir,build)

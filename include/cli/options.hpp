@@ -23,6 +23,7 @@ struct Options
 {
 	std::string			payload_path;
 	std::string			stub_path;
+	std::string			section;
 	bool				auto_stub;
 	uint8_t				restore;
 	const compression::Algorithm	*compression;

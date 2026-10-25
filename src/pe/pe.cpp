@@ -11,8 +11,11 @@
 /* ************************************************************************** */
 
 #include "pe/pe.hpp"
+#include "obsidian.hpp"
 
+#ifdef OBSIDIAN_DEBUG
 #include <iostream>
+#endif
 #include <algorithm>
 #include <fstream>
 
@@ -92,7 +95,7 @@ static bool	fill_optional_info(std::string &payload, PEInfo &info)
 	optional_offset = static_cast<size_t>(info.dos.e_lfanew) + 24;
 	if (info.coff.size_of_optional_header < 112 || optional_offset > payload.size() || info.coff.size_of_optional_header > payload.size() - optional_offset)
 	{
-		std::cout << "obsidian: not a PE32+ x86-64 file (optional header out of bounds or too small)\n";
+		OBSIDIAN_LOG("obsidian: not a PE32+ x86-64 file (optional header out of bounds or too small)\n");
 		return (false);
 	}
 	info.optional.entry_point_rva = read_uint32_le(payload.data() + optional_offset + 16);
@@ -122,7 +125,7 @@ static bool	fill_sections(std::string &payload, PEInfo &info)
 	table_offset = static_cast<size_t>(info.dos.e_lfanew) + 24 + info.coff.size_of_optional_header;
 	if (table_offset > payload.size() || info.coff.number_of_sections == 0 || info.coff.number_of_sections > (payload.size() - table_offset) / 40)
 	{
-		std::cout << "obsidian: not a PE32+ x86-64 file (section table out of bounds)\n";
+		OBSIDIAN_LOG("obsidian: not a PE32+ x86-64 file (section table out of bounds)\n");
 		return (false);
 	}
 	index = 0;
@@ -143,7 +146,7 @@ static bool	fill_sections(std::string &payload, PEInfo &info)
 		section.characteristics = read_uint32_le(data + 36);
 		if (section.raw_size != 0 && (section.raw_offset > payload.size() || section.raw_size > payload.size() - section.raw_offset))
 		{
-			std::cout << "obsidian: not a PE32+ x86-64 file (section data out of bounds)\n";
+			OBSIDIAN_LOG("obsidian: not a PE32+ x86-64 file (section data out of bounds)\n");
 			return (false);
 		}
 		info.sections.push_back(section);
@@ -156,7 +159,7 @@ bool	fill_pe_info(std::string &payload, PEInfo &info)
 {
 	if (payload.size() < 64)
 	{
-		std::cout << "obsidian: not a PE32+ x86-64 file (too small for a PE header)\n";
+		OBSIDIAN_LOG("obsidian: not a PE32+ x86-64 file (too small for a PE header)\n");
 		return (false);
 	}
 	info.dos.signature[0] = payload[0];
@@ -164,14 +167,14 @@ bool	fill_pe_info(std::string &payload, PEInfo &info)
 
 	if (info.dos.signature[0] != 'M' || info.dos.signature[1] != 'Z')
 	{
-		std::cout << "obsidian: not a PE32+ x86-64 file (MZ signature missing)\n";
+		OBSIDIAN_LOG("obsidian: not a PE32+ x86-64 file (MZ signature missing)\n");
 		return (false);
 	}
 	info.dos.e_lfanew = read_uint32_le(payload.data() + 0x3C);
 
 	if (info.dos.e_lfanew < 0x40 || info.dos.e_lfanew > payload.size() - 26)
 	{
-		std::cout << "obsidian: not a PE32+ x86-64 file (e_lfanew out of bounds: 0x" << std::hex << info.dos.e_lfanew << ")\n";
+		OBSIDIAN_LOG("obsidian: not a PE32+ x86-64 file (e_lfanew out of bounds: 0x" << std::hex << info.dos.e_lfanew << ")\n");
 		return (false);
 	}
 	info.pe_signature[0] = payload[info.dos.e_lfanew];
@@ -181,7 +184,7 @@ bool	fill_pe_info(std::string &payload, PEInfo &info)
 
 	if (info.pe_signature[0] != 'P' || info.pe_signature[1] != 'E' || info.pe_signature[2] != '\0' || info.pe_signature[3] != '\0')
 	{
-		std::cout << "obsidian: not a PE32+ x86-64 file (PE signature not found)\n";
+		OBSIDIAN_LOG("obsidian: not a PE32+ x86-64 file (PE signature not found)\n");
 		return (false);
 	}
 	info.coff.machine = read_uint16_le(payload.data() + info.dos.e_lfanew + 4);
@@ -191,13 +194,13 @@ bool	fill_pe_info(std::string &payload, PEInfo &info)
 
 	if (info.coff.machine != 0x8664)
 	{
-		std::cout << "obsidian: not a PE32+ x86-64 file (machine 0x" << std::hex << info.coff.machine << " is not 0x8664)\n";
+		OBSIDIAN_LOG("obsidian: not a PE32+ x86-64 file (machine 0x" << std::hex << info.coff.machine << " is not 0x8664)\n");
 		return (false);
 	}
 
 	if (info.magic != 0x20B)
 	{
-		std::cout << "obsidian: not a PE32+ x86-64 file (magic 0x" << std::hex << info.magic << " is not 0x20B)\n";
+		OBSIDIAN_LOG("obsidian: not a PE32+ x86-64 file (magic 0x" << std::hex << info.magic << " is not 0x20B)\n");
 		return (false);
 	}
 	if (!fill_optional_info(payload, info))
@@ -714,10 +717,13 @@ bool add_section(std::string &stub, std::string name, uint32_t virtual_size, std
     return (true);
 }
 
-bool add_restore_section(std::string &stub, uint32_t original_image_size, uint32_t &restore_rva)
+bool add_payload_section(std::string &stub, std::string name, uint32_t region_size, std::string key, uint32_t &section_rva)
 {
     size_t raw_offset;
+    uint32_t virtual_size;
 
-    return (add_section(stub, ".obsram", original_image_size, std::string(),
-        0xC0000080U, restore_rva, raw_offset));
+    virtual_size = region_size;
+    if (virtual_size < 4096)
+        virtual_size = 4096;
+    return (add_section(stub, name, virtual_size, key, 0xE0000040U, section_rva, raw_offset));
 }
