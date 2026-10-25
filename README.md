@@ -586,3 +586,15 @@ make stub-mingw            # stub PE via mingw-w64 (optionnel)
 ```
 
 Fichiers : `src/packer/random.cpp`, `Makefile`, `include/cli/options.hpp`, `src/cli/options.cpp`, `src/main.cpp`, `README.md`.
+
+## Durcissement anti-fingerprint — 2026-10-25
+
+Deux déclencheurs vus par une analyse statique sont supprimés du stub.
+
+**1. Cibles de module stomping neutres.** La liste `g_stomp_candidates` contenait `amsi.dll`, `wintrust.dll`, `msi.dll`, `wldap32.dll`, `winhttp.dll`, `crypt32.dll` et `dbghelp.dll`. Même sans mode stomp, ces noms restent dans le binaire et suffisent à faire dire « charge amsi / winhttp / crypt32 ». Ils sont remplacés par des modules banals et déjà présents partout : `userenv.dll`, `profapi.dll`, `d3d11.dll`, `textinputframework.dll`, `windows.storage.dll`, `msimg32.dll`, `version.dll`. Le stomping fonctionne à l'identique.
+
+**2. Fini les chaînes de debug en release.** `readiness` et `validity` étaient assignées hors `#ifdef OBSIDIAN_DEBUG`, donc les littéraux (`"not ready: environment incomplete"`, `"conditional: TLS callbacks pending"`, `"ready: delay imports self-resolve at first call"`, `"valid"`, `"INVALID"`) restaient dans le stub release. Le calcul et les logs correspondants sont désormais encadrés par `#ifdef OBSIDIAN_DEBUG` ; en release, `(void)tls_ready; (void)delay_dlls;` garde les paramètres utilisés pour `-Werror`.
+
+Fichiers : `src/stub/main.cpp`.
+
+Reste (non traité ici) : `basic_string::substr`, `vector::_M_realloc_append`, `Cannot convert character sequence` et les imports `libstdc++-6.dll` / `libgcc_s_seh-1.dll` proviennent du STL utilisé par le stub.
