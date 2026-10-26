@@ -133,7 +133,7 @@ endif
 
 # Cross-builds the Windows stub from Linux (needs mingw-w64).
 ifeq ($(TARGET_OS),linux)
-MINGW_CXX ?= x86_64-w64-mingw32-g++
+MINGW_CXX ?= x86_64-w64-mingw32-g++ -static
 MINGW_CC ?= x86_64-w64-mingw32-gcc
 MINGW_OBJ_DIR := $(BUILD_DIR)/mingw
 MINGW_STUB_OBJECTS := $(patsubst $(SRC_DIR)/%.cpp,$(MINGW_OBJ_DIR)/%.o,$(STUB_SOURCES) $(COMMON_SOURCES)) $(patsubst $(LZMA_DIR)/%.c,$(MINGW_OBJ_DIR)/lzma/%.o,$(LZMA_SOURCES))
